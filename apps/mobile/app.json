@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "Tranqly: Daily Reflection",
+    "slug": "tranqly",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0B0E14",
+    "scheme": "tranqly",
+    "icon": "./assets/icon.png",
+    "plugins": ["expo-notifications"],
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.tranqly.app",
+      "buildNumber": "1",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Tranqly uses the microphone to turn your spoken check-in into text.",
+        "NSUserNotificationUsageDescription": "Tranqly uses notifications for gentle reflection reminders and weekly insights."
+      }
+    },
+    "android": {
+      "package": "com.tranqly.app",
+      "permissions": ["RECORD_AUDIO"]
+    },
+    "extra": {
+      "apiBaseUrl": ""
+    }
+  }
+}

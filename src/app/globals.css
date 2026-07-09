@@ -1,0 +1,136 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --app-bg: #111024;
+  --card: #1c1830;
+  --ink: #0f0e1c;
+  --edge: #4a3e68;
+  --fg: #f8f5ff;
+  --dim: #c8bce6;
+  --faint: #8e82ad;
+  --button: #5b3bb7;
+  --calm: #b894ff;
+  --sea: #d8c4ff;
+  --app-bg-rgb: 17 16 36;
+  --card-rgb: 28 24 48;
+  --ink-rgb: 15 14 28;
+  --edge-rgb: 74 62 104;
+  --fg-rgb: 248 245 255;
+  --dim-rgb: 200 188 230;
+  --faint-rgb: 142 130 173;
+  --button-rgb: 91 59 183;
+  --calm-rgb: 184 148 255;
+  --sea-rgb: 216 196 255;
+}
+
+html,
+body {
+  height: 100%;
+  background:
+    radial-gradient(circle at 50% -12%, rgb(var(--calm-rgb) / 0.2), transparent 32%),
+    radial-gradient(circle at 85% 75%, rgb(var(--sea-rgb) / 0.08), transparent 30%),
+    var(--app-bg);
+  color: var(--fg);
+  overscroll-behavior-y: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+html:has(body.app-body),
+body.app-body {
+  overflow-x: hidden;
+}
+
+html:has(body.landing-body),
+body.landing-body {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+input,
+textarea,
+select {
+  font-size: 16px;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.75;
+    transform: scale(1.06);
+  }
+}
+
+.aura {
+  animation: breathe 5s ease-in-out infinite;
+}
+
+.text-gradient {
+  background: linear-gradient(120deg, var(--calm) 0%, var(--sea) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgb(var(--calm-rgb) / 0.45);
+  }
+  100% {
+    box-shadow: 0 0 0 22px rgb(var(--calm-rgb) / 0);
+  }
+}
+
+.recording {
+  animation: pulse-ring 1.6s ease-out infinite;
+}
+
+@keyframes dot-bounce {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  40% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+.typing-dot {
+  animation: dot-bounce 1.2s ease-in-out infinite;
+}
+
+.typing-dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.typing-dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@media all and (display-mode: standalone) {
+  body {
+    padding-top: var(--safe-top);
+  }
+}

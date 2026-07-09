@@ -1,0 +1,43 @@
+---
+pid: 6684
+cwd: "C:\Users\ND\Documents\GitHub\dailyAI"
+command: "cd \"C:\\Users\\ND\\Documents\\GitHub\\dailyAI\"; npm run build"
+started_at: 2026-07-06T12:53:19.860Z
+running_for_ms: 825005   
+---
+
+> tranqly@1.0.0 build
+> node scripts/run-next.mjs build
+
+  ▲ Next.js 14.2.35
+  - Environments: .env
+
+   Creating an optimized production build ...
+ ✓ Compiled successfully
+   Linting and checking validity of types ...
+   Collecting page data ...
+   Generating static pages (0/9) ...
+   Generating static pages (2/9) 
+   Generating static pages (4/9) 
+   Generating static pages (6/9) 
+ ✓ Generating static pages (9/9)
+   Finalizing page optimization ...
+   Collecting build traces ...
+
+Route (app)                              Size     First Load JS
+┌ ○ /                                    127 kB          254 kB
+├ ○ /_not-found                          873 B          88.2 kB
+├ ƒ /api/analyze                         0 B                0 B
+├ ƒ /api/checkout                        0 B                0 B
+├ ƒ /api/coach                           0 B                0 B
+├ ƒ /api/stripe-webhook                  0 B                0 B
+└ ƒ /api/transcribe                      0 B                0 B
++ First Load JS shared by all            87.3 kB
+  ├ chunks/117-b97c862b24e7235c.js       31.7 kB
+  ├ chunks/fd9d1056-1225178e105cf676.js  53.6 kB
+  └ other shared chunks (total)          1.92 kB
+
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+

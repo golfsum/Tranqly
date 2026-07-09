@@ -1,0 +1,8878 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Audio } from "expo-av";
+import Constants from "expo-constants";
+import * as Haptics from "expo-haptics";
+import { LinearGradient } from "expo-linear-gradient";
+import * as Notifications from "expo-notifications";
+import { StatusBar } from "expo-status-bar";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  Animated,
+  Easing,
+  Image,
+  ImageSourcePropType,
+  Keyboard,
+  LayoutChangeEvent,
+  KeyboardAvoidingView,
+  Linking,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  useWindowDimensions,
+  View,
+} from "react-native";
+import Svg, { Circle, Defs, Ellipse, G, LinearGradient as SvgLinearGradient, Path, Rect, Stop } from "react-native-svg";
+import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import { getPasswordStrength, isPasswordValid, passwordRuleItems } from "./lib/authRules";
+import {
+  adjustedTimeForQuietHours,
+  adaptiveSuggestion,
+  dailyReminderCadenceDays,
+  DEFAULT_NOTIFICATION_SETTINGS,
+  formatHourLabel,
+  NotificationSettings,
+  QUIET_MINUTE_OPTIONS,
+  updateReflectionTiming,
+} from "./lib/notifications";
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: false,
+    shouldSetBadge: false,
+  }),
+});
+
+type Tab = "coach" | "journey" | "you";
+
+interface CoachReply {
+  message: string;
+  nextStep: string;
+  title?: string;
+  pattern?: string;
+  summary?: string;
+  themes?: string[];
+  tags?: string[];
+  emotionalTone?: string;
+  followUpQuestions?: string[];
+  source: "ai" | "local";
+  createdAt: string;
+}
+
+interface CheckIn {
+  id: string;
+  text: string;
+  createdAt: string;
+  dateKey: string;
+  source?: "voice" | "typed";
+  prompt?: string;
+  promptType?: string;
+  promptWhy?: string;
+  reply?: CoachReply;
+}
+
+interface DeepInsight {
+  headline: string;
+  insight: string;
+  suggestion: string;
+  affirmation: string;
+  createdAt: string;
+}
+
+interface MobileAuthUser {
+  email: string;
+  localId: string;
+  idToken: string;
+  refreshToken: string;
+  expiresAt: number;
+}
+
+interface AppState {
+  checkIns: CheckIn[];
+  premium: boolean;
+  coachUsage?: { dateKey: string; count: number };
+  moods: Record<string, string>;
+  lastDeepInsight: DeepInsight | null;
+  authUser?: MobileAuthUser | null;
+  displayName?: string;
+  sanctuaryTheme?: SanctuaryThemeKey;
+  notificationSettings?: NotificationSettings;
+  sanctuaryUnlockNotifications?: Record<string, string | null>;
+  onboardingCompleted?: boolean;
+  onboardingCoachCompleted?: boolean;
+  onboardingCoachStep?: "mic" | "journey" | "sanctuary" | null;
+  onboardingSkippedAt?: string | null;
+  onboardingCompletedAt?: string | null;
+}
+
+type SanctuaryThemeKey =
+  | "blossom"
+  | "twilight"
+  | "ocean"
+  | "forest"
+  | "sunrise"
+  | "mountain"
+  | "misty"
+  | "desert"
+  | "snowfall"
+  | "northern"
+  | "cloud";
+
+const TABS: { key: Tab; label: string; icon: React.FC<{ active: boolean }> }[] = [
+  {
+    key: "coach",
+    label: "Insights",
+    icon: ({ active }) => (
+      <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
+        {active && (
+          <Defs>
+            <SvgLinearGradient id="heart" x1="3" y1="4" x2="21" y2="21">
+              <Stop stopColor="#B894FF" />
+              <Stop offset={1} stopColor="#D8C4FF" />
+            </SvgLinearGradient>
+          </Defs>
+        )}
+        <Path
+          d="M12 21s-7.5-4.7-9.5-9A5.4 5.4 0 0 1 12 6.6 5.4 5.4 0 0 1 21.5 12c-2 4.3-9.5 9-9.5 9Z"
+          fill={active ? "url(#heart)" : "none"}
+          stroke={active ? "none" : "#7E8B9D"}
+          strokeWidth={1.8}
+          strokeLinejoin="round"
+        />
+      </Svg>
+    ),
+  },
+  {
+    key: "journey",
+    label: "Journey",
+    icon: ({ active }) => (
+      <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
+        <Path
+          d="M4 19c4-1 3-6 7-7s4-5 8-6"
+          stroke={active ? "#B894FF" : "#8E82AD"}
+          strokeWidth={2.2}
+          strokeLinecap="round"
+        />
+        <Circle cx={4} cy={19} r={2} fill={active ? "#D8C4FF" : "#8E82AD"} />
+        <Circle cx={19} cy={6} r={2} fill={active ? "#B894FF" : "#8E82AD"} />
+      </Svg>
+    ),
+  },
+  {
+    key: "you",
+    label: "You",
+    icon: ({ active }) => (
+      <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
+        <Circle
+          cx={12}
+          cy={8}
+          r={3.6}
+          stroke={active ? "#B894FF" : "#8E82AD"}
+          strokeWidth={2}
+        />
+        <Path
+          d="M4.5 20a7.5 7.5 0 0 1 15 0"
+          stroke={active ? "#B894FF" : "#8E82AD"}
+          strokeWidth={2}
+          strokeLinecap="round"
+        />
+      </Svg>
+    ),
+  },
+];
+
+const SANCTUARY_THEMES: {
+  key: SanctuaryThemeKey;
+  label: string;
+  description: string;
+  feeling: string;
+  colors: [string, string];
+  panel: [string, string, string];
+  accent: string;
+  accent2: string;
+  artwork: ImageSourcePropType;
+  ambient: string[];
+  palette: string[];
+  unlockDays: number;
+  free: boolean;
+  unlockType?: "reflections" | "plus" | "seasonal";
+}[] = [
+  {
+    key: "blossom",
+    label: "Lotus Blossom",
+    description: "A peaceful lotus pond where every reflection helps your sanctuary bloom.",
+    feeling: "Peace, reflection, new beginnings",
+    colors: ["#E7A6D8", "#BDA9FF"],
+    panel: ["#171126", "#251934", "#100B1B"],
+    accent: "#E7A6D8",
+    accent2: "#BDA9FF",
+    artwork: require("./assets/images/sanctuary/lotus_blossom.png"),
+    ambient: ["Floating petals", "Gentle ripples", "Fireflies", "Soft glow"],
+    palette: ["Lavender", "Violet", "Sage", "Rose", "Mist"],
+    unlockDays: 0,
+    free: true,
+    unlockType: "reflections",
+  },
+  {
+    key: "twilight",
+    label: "Twilight Grove",
+    description: "A quiet grove beneath the evening sky where moonlight, stars, and peaceful paths help you leave the day behind.",
+    feeling: "Evening, rest, stillness",
+    colors: ["#B894FF", "#D8C4FF"],
+    panel: ["#111024", "#2B214B", "#0F0E1C"],
+    accent: "#B894FF",
+    accent2: "#D8C4FF",
+    artwork: require("./assets/images/sanctuary/twilight_grove.png"),
+    ambient: ["Twinkling stars", "Slow clouds", "Moon glow", "Fireflies"],
+    palette: ["Midnight", "Indigo", "Silver", "Lavender", "Pine"],
+    unlockDays: 5,
+    free: true,
+    unlockType: "reflections",
+  },
+  {
+    key: "ocean",
+    label: "Ocean Calm",
+    description: "Gentle waves and endless horizons create space to breathe deeply, reset your thoughts, and let the tide carry away today's worries.",
+    feeling: "Breathe, release, clarity",
+    colors: ["#87B8C9", "#F2A58C"],
+    panel: ["#071420", "#315466", "#06101A"],
+    accent: "#87B8C9",
+    accent2: "#F2A58C",
+    artwork: require("./assets/images/sanctuary/ocean_calm.png"),
+    ambient: ["Moving waves", "Ocean mist", "Flying birds", "Water shimmer"],
+    palette: ["Ocean", "Teal", "Seafoam", "Coral", "Mist"],
+    unlockDays: 10,
+    free: false,
+    unlockType: "reflections",
+  },
+  {
+    key: "forest",
+    label: "Forest Haven",
+    description: "A peaceful woodland retreat filled with flowing streams, towering trees, and quiet trails that help you reconnect with yourself.",
+    feeling: "Grounded, nature, comfort",
+    colors: ["#A9B99B", "#D4C7A1"],
+    panel: ["#0C1511", "#3F5548", "#090F0C"],
+    accent: "#A9B99B",
+    accent2: "#D4C7A1",
+    artwork: require("./assets/images/sanctuary/forest_haven.png"),
+    ambient: ["Birds", "Flowing stream", "Floating pollen", "Gentle breeze"],
+    palette: ["Forest", "Moss", "Bark", "Lavender", "Sunlight"],
+    unlockDays: 15,
+    free: false,
+    unlockType: "reflections",
+  },
+  {
+    key: "sunrise",
+    label: "Sunset Fields",
+    description: "Golden fields beneath a colorful sunset remind you that every ending is also the beginning of something new.",
+    feeling: "Gratitude, hope, closure",
+    colors: ["#E5A65C", "#D989B2"],
+    panel: ["#1B1326", "#5B4563", "#120D1B"],
+    accent: "#E5A65C",
+    accent2: "#D989B2",
+    artwork: require("./assets/images/sanctuary/sunset_fields.png"),
+    ambient: ["Swaying grass", "Birds", "Warm sunlight", "Floating seeds"],
+    palette: ["Amber", "Peach", "Orange", "Pink", "Lavender"],
+    unlockDays: 20,
+    free: false,
+    unlockType: "reflections",
+  },
+  {
+    key: "mountain",
+    label: "Mountain Peak",
+    description: "High above the clouds, each reflection reminds you how far you've climbed and how much you've grown.",
+    feeling: "Strength, perspective, achievement",
+    colors: ["#A9BFE8", "#D3B0FF"],
+    panel: ["#111627", "#1B2238", "#0B1020"],
+    accent: "#A9BFE8",
+    accent2: "#D3B0FF",
+    artwork: require("./assets/images/sanctuary/mountain_peak.png"),
+    ambient: ["Clouds", "Mountain breeze", "Snow particles", "Distant birds"],
+    palette: ["Slate", "Snow", "Granite", "Frost", "Lavender"],
+    unlockDays: 24,
+    free: false,
+    unlockType: "reflections",
+  },
+  {
+    key: "misty",
+    label: "Misty Meadow",
+    description: "Soft morning mist rolls across blooming meadows where quiet paths encourage curiosity and peaceful reflection.",
+    feeling: "Fresh start, possibility, gentleness",
+    colors: ["#B2C8B3", "#B8A7DF"],
+    panel: ["#111827", "#1C2433", "#0B111C"],
+    accent: "#B2C8B3",
+    accent2: "#B8A7DF",
+    artwork: require("./assets/images/sanctuary/misty_meadows.png"),
+    ambient: ["Morning fog", "Wildflowers", "Floating pollen", "Butterflies"],
+    palette: ["Mist", "Sage", "Blue", "Lavender", "Green"],
+    unlockDays: 27,
+    free: false,
+    unlockType: "reflections",
+  },
+  {
+    key: "desert",
+    label: "Desert Dusk",
+    description: "Wide open skies and quiet desert landscapes invite you to slow down, breathe deeply, and appreciate life's quiet moments.",
+    feeling: "Stillness, simplicity, resilience",
+    colors: ["#D17A52", "#B583C7"],
+    panel: ["#1E141E", "#2C1E2A", "#120C13"],
+    accent: "#D17A52",
+    accent2: "#B583C7",
+    artwork: require("./assets/images/sanctuary/desert_dusk.png"),
+    ambient: ["Wind", "Sand drifting", "Warm glow", "Desert plants"],
+    palette: ["Terracotta", "Sand", "Purple", "Orange", "Brown"],
+    unlockDays: 30,
+    free: false,
+    unlockType: "reflections",
+  },
+  {
+    key: "snowfall",
+    label: "Snowfall Retreat",
+    description: "Fresh snow blankets a peaceful winter retreat where the world slows down and every reflection feels warm and comforting.",
+    feeling: "Quiet, comfort, peace",
+    colors: ["#B7D7F0", "#D6C7FF"],
+    panel: ["#11182A", "#1B2438", "#0A1020"],
+    accent: "#B7D7F0",
+    accent2: "#D6C7FF",
+    artwork: require("./assets/images/sanctuary/snowfall_retreat.png"),
+    ambient: ["Falling snow", "Gentle wind", "Frost sparkle", "Cabin smoke"],
+    palette: ["Snow", "Ice", "Lavender", "Evergreen", "Silver"],
+    unlockDays: 0,
+    free: false,
+    unlockType: "seasonal",
+  },
+  {
+    key: "northern",
+    label: "Northern Lights",
+    description: "Watch colorful auroras dance across the night sky while reflecting on life's beauty and endless possibilities.",
+    feeling: "Wonder, awe, inspiration",
+    colors: ["#6EE7B7", "#B879FF"],
+    panel: ["#061329", "#0E2136", "#050C1A"],
+    accent: "#6EE7B7",
+    accent2: "#B879FF",
+    artwork: require("./assets/images/sanctuary/northern_lights.png"),
+    ambient: ["Aurora animation", "Stars", "Water reflections", "Light shimmer"],
+    palette: ["Aurora", "Emerald", "Violet", "Midnight", "Indigo"],
+    unlockDays: 0,
+    free: false,
+    unlockType: "plus",
+  },
+  {
+    key: "cloud",
+    label: "Cloud Sanctuary",
+    description: "A soft sanctuary above the clouds where reflection feels spacious, gentle, and open.",
+    feeling: "Lightness, imagination, perspective",
+    colors: ["#D7B8FF", "#F1B88B"],
+    panel: ["#1B162B", "#28213A", "#120F1E"],
+    accent: "#D7B8FF",
+    accent2: "#F1B88B",
+    artwork: require("./assets/images/sanctuary/cloud_sanctuary.png"),
+    ambient: ["Slow clouds", "Soft light", "Drifting mist", "Warm horizon"],
+    palette: ["Cloud", "Lavender", "Peach", "Violet", "Gold"],
+    unlockDays: 0,
+    free: false,
+    unlockType: "plus",
+  },
+];
+
+type AppThemePalette = {
+  bg: string;
+  card: string;
+  ink: string;
+  edge: string;
+  fg: string;
+  dim: string;
+  faint: string;
+  accent: string;
+  accent2: string;
+  button: string;
+  disabled: string;
+  helperBg: string;
+  helperEdge: string;
+  weeklyBg: string;
+};
+
+const APP_THEME_PALETTES: Partial<Record<SanctuaryThemeKey, AppThemePalette>> & {
+  twilight: AppThemePalette;
+} = {
+  twilight: {
+    bg: "#111024",
+    card: "#1C1830",
+    ink: "#0F0E1C",
+    edge: "#4A3E68",
+    fg: "#F8F5FF",
+    dim: "#C8BCE6",
+    faint: "#8E82AD",
+    accent: "#B894FF",
+    accent2: "#D8C4FF",
+    button: "#5B3BB7",
+    disabled: "#2A2440",
+    helperBg: "rgba(184,148,255,0.12)",
+    helperEdge: "rgba(216,196,255,0.24)",
+    weeklyBg: "#1A1434",
+  },
+  sunrise: {
+    bg: "#1B1326",
+    card: "#281B32",
+    ink: "#120D1B",
+    edge: "#5B4563",
+    fg: "#FFF7F4",
+    dim: "#DFC7D1",
+    faint: "#A58A9A",
+    accent: "#D99A8B",
+    accent2: "#C7A5D9",
+    button: "#7A4E68",
+    disabled: "#33243D",
+    helperBg: "rgba(217,154,139,0.12)",
+    helperEdge: "rgba(199,165,217,0.24)",
+    weeklyBg: "#24152F",
+  },
+  ocean: {
+    bg: "#071420",
+    card: "#0E2230",
+    ink: "#06101A",
+    edge: "#315466",
+    fg: "#F1FAFF",
+    dim: "#B7D4DE",
+    faint: "#7895A3",
+    accent: "#87B8C9",
+    accent2: "#B8D7E5",
+    button: "#2D5D72",
+    disabled: "#142A36",
+    helperBg: "rgba(135,184,201,0.12)",
+    helperEdge: "rgba(184,215,229,0.24)",
+    weeklyBg: "#0A1A2B",
+  },
+  forest: {
+    bg: "#0C1511",
+    card: "#17241D",
+    ink: "#090F0C",
+    edge: "#3F5548",
+    fg: "#F5FBF4",
+    dim: "#C8D6C7",
+    faint: "#8D9E8E",
+    accent: "#A9B99B",
+    accent2: "#D4C7A1",
+    button: "#536B58",
+    disabled: "#202B23",
+    helperBg: "rgba(169,185,155,0.12)",
+    helperEdge: "rgba(212,199,161,0.24)",
+    weeklyBg: "#111D17",
+  },
+  blossom: {
+    bg: "#1B1321",
+    card: "#2A1A30",
+    ink: "#120E18",
+    edge: "#65405E",
+    fg: "#FFF5FC",
+    dim: "#E5C5DC",
+    faint: "#A9859D",
+    accent: "#F19ACD",
+    accent2: "#D7B8FF",
+    button: "#9B5B89",
+    disabled: "#352139",
+    helperBg: "rgba(241,154,205,0.12)",
+    helperEdge: "rgba(215,184,255,0.24)",
+    weeklyBg: "#251330",
+  },
+};
+
+const STORE_KEY = "tranqly-mobile-v1";
+const FREE_AI_INSIGHTS_PER_DAY = 5;
+const TRANQLY_LOGO = require("./assets/images/tranqly_logo.png");
+const configuredApiBaseUrl =
+  process.env.EXPO_PUBLIC_API_BASE_URL ||
+  (Constants.expoConfig?.extra?.apiBaseUrl as string | undefined) ||
+  "";
+const FIREBASE_API_KEY =
+  process.env.EXPO_PUBLIC_FIREBASE_API_KEY ||
+  process.env.NEXT_PUBLIC_FIREBASE_API_KEY ||
+  (Constants.expoConfig?.extra?.firebaseApiKey as string | undefined) ||
+  "";
+const devHostUri =
+  (Constants.expoConfig as { hostUri?: string } | undefined)?.hostUri ||
+  (Constants.manifest2?.extra?.expoGo as { debuggerHost?: string } | undefined)
+    ?.debuggerHost ||
+  "";
+const devHost = devHostUri.split(":")[0];
+const API_BASE_URL =
+  configuredApiBaseUrl ||
+  (__DEV__ && devHost ? `http://${devHost}:3457` : "");
+
+if (__DEV__) {
+  console.info("Tranqly mobile API base URL:", API_BASE_URL || "(not configured)");
+}
+
+function logMobileApiError(input: {
+  requestId?: string;
+  errorCode: string;
+  errorMessage: string;
+  featureArea: string;
+  statusCode?: number;
+  durationMs?: number;
+  route?: string;
+  metadata?: Record<string, unknown>;
+}) {
+  if (!API_BASE_URL) return;
+  fetch(`${API_BASE_URL}/api/client-log`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ...input,
+      platform: "mobile",
+      severity: "error",
+    }),
+  }).catch((err) => {
+    if (__DEV__) console.warn("Failed to send mobile error log", err);
+  });
+}
+
+const DAILY_PROMPTS = [
+  "What made you smile today?",
+  "What challenged you today?",
+  "What are you grateful for today?",
+  "What's one thing you're proud of?",
+  "What surprised you today?",
+  "What gave you energy today?",
+  "What felt heavy today?",
+  "What do you want to remember from today?",
+  "What are you looking forward to tomorrow?",
+  "What's one small win from today?",
+  "What did you learn today?",
+  "What helped you feel calm today?",
+  "What would you like to let go of today?",
+  "What was your favorite moment today?",
+  "What else is on your mind?",
+  "What felt different today?",
+  "What did you need more of today?",
+  "What did you handle better than before?",
+  "What felt easier than expected?",
+  "What took more energy than you thought?",
+  "What helped you keep going today?",
+  "What do you want to carry into tomorrow?",
+  "What do you want to leave behind tonight?",
+  "Where did you feel most like yourself today?",
+  "What would make tomorrow feel a little lighter?",
+];
+
+const MOBILE_TOPIC_GROUPS = [
+  { key: "work", keywords: ["work", "job", "meeting", "client", "project", "boss", "deadline", "office"] },
+  { key: "sleep", keywords: ["sleep", "slept", "rest", "tired", "drained", "exhausted", "energy"] },
+  { key: "stress", keywords: ["stress", "stressed", "pressure", "overwhelmed", "anxious", "hard", "heavy"] },
+  { key: "gratitude", keywords: ["grateful", "gratitude", "thankful", "appreciate"] },
+  { key: "family", keywords: ["family", "mom", "dad", "partner", "friend", "friends", "kids", "wife", "husband"] },
+  { key: "calm", keywords: ["calm", "quiet", "peace", "settled", "present", "breathe", "slow"] },
+  { key: "outside", keywords: ["walk", "outside", "fresh air", "run", "gym", "workout", "hike"] },
+] as const;
+
+const MOBILE_SANCTUARY_PROMPTS: Record<string, readonly string[]> = {
+  blossom: ["What helped you grow today, even quietly?", "What part of today deserves a little peace?"],
+  twilight: ["As the day settles, what would you like to leave behind?", "What felt softer by the end of today?"],
+  ocean: ["What helped you feel steady today?", "What came in waves today, and what passed?"],
+  forest: ["What helped you feel grounded today?", "Where did you find a little shelter today?"],
+  sunrise: ["What felt possible today?", "What would you like to begin again tomorrow?"],
+  misty: ["What became a little clearer today?", "What needed patience today?"],
+  mountain: ["What felt worth the effort today?", "What helped you stay steady when the day got steep?"],
+  desert: ["What helped you protect your energy today?", "What felt essential today, and what did not?"],
+  snowfall: ["What deserves gentleness today?", "What felt quiet, still, or simple?"],
+  cloud: ["What helped you rise above the noise today?", "What feels clearer from a little distance?"],
+  northern: ["What surprised you with a little light today?", "What quiet spark stayed with you today?"],
+};
+
+function mobilePromptSeed(offset = 0) {
+  return Math.floor(Date.now() / 86_400_000) + offset;
+}
+
+function mobileRotate<T>(items: readonly T[], seed: number) {
+  return items[Math.abs(seed) % items.length];
+}
+
+function reflectionTimeSummary(entries: CheckIn[]) {
+  const counts = { morning: 0, afternoon: 0, evening: 0, night: 0 };
+  for (const entry of entries.slice(0, 20)) {
+    const hour = new Date(entry.createdAt).getHours();
+    if (hour < 5) counts.night += 1;
+    else if (hour < 12) counts.morning += 1;
+    else if (hour < 18) counts.afternoon += 1;
+    else counts.evening += 1;
+  }
+  return Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "evening";
+}
+
+function topThemeSummary(entries: CheckIn[]) {
+  const recent = entries.slice(0, 20).map((entry) => entry.text.toLowerCase());
+  const strongest = MOBILE_TOPIC_GROUPS.map((group) => ({
+    key: group.key,
+    count: recent.filter((text) => group.keywords.some((keyword) => text.includes(keyword))).length,
+  })).sort((a, b) => b.count - a.count)[0];
+  if (!strongest || strongest.count === 0) return "Patterns are still forming.";
+  return `${strongest.key.charAt(0).toUpperCase() + strongest.key.slice(1)} has appeared a few times.`;
+}
+
+function topStruggleSummary(entries: CheckIn[]) {
+  const recent = entries.slice(0, 20).map((entry) => entry.text.toLowerCase());
+  const sleepCount = recent.filter((text) => ["sleep", "tired", "drained", "energy"].some((keyword) => text.includes(keyword))).length;
+  const stressCount = recent.filter((text) => ["stress", "pressure", "overwhelmed", "hard"].some((keyword) => text.includes(keyword))).length;
+  const workCount = recent.filter((text) => ["work", "job", "meeting", "deadline"].some((keyword) => text.includes(keyword))).length;
+  if (sleepCount >= 2) return "Sleep and energy are forming a pattern.";
+  if (stressCount >= 2) return "Stress has been building in your recent check-ins.";
+  if (workCount >= 2) return "Work has taken a lot of space lately.";
+  return "Tranqly is still learning what weighs on you.";
+}
+
+const VOICE_LIMIT_SECONDS = 60;
+const TRANSCRIBE_TIMEOUT_MS = 25000;
+const COACH_TIMEOUT_MS = 30000;
+
+function todayKey() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function currentStreak(entries: CheckIn[]) {
+  const days = new Set(entries.map((entry) => entry.dateKey));
+  if (!days.size) return 0;
+
+  const cursor = new Date();
+  if (!days.has(todayKey())) {
+    cursor.setDate(cursor.getDate() - 1);
+  }
+
+  let streak = 0;
+  while (true) {
+    const y = cursor.getFullYear();
+    const m = String(cursor.getMonth() + 1).padStart(2, "0");
+    const d = String(cursor.getDate()).padStart(2, "0");
+    const key = `${y}-${m}-${d}`;
+    if (days.has(key)) {
+      streak++;
+      cursor.setDate(cursor.getDate() - 1);
+    } else {
+      break;
+    }
+  }
+  return streak;
+}
+
+function bestStreak(entries: CheckIn[]) {
+  const days = Array.from(new Set(entries.map((e) => e.dateKey))).sort();
+  if (!days.length) return 0;
+  let best = 1;
+  let cur = 1;
+  for (let i = 1; i < days.length; i++) {
+    const prev = new Date(days[i - 1]);
+    const curr = new Date(days[i]);
+    const diff = (curr.getTime() - prev.getTime()) / (1000 * 60 * 60 * 24);
+    if (diff === 1) {
+      cur++;
+      best = Math.max(best, cur);
+    } else {
+      cur = 1;
+    }
+  }
+  return best;
+}
+
+function growthEmoji(streak: number) {
+  if (streak >= 21) return "Sprout";
+  if (streak >= 7) return "Leaf";
+  if (streak >= 3) return "Bloom";
+  return "Sprout";
+}
+
+function localDeepInsight(text: string): DeepInsight {
+  return {
+    headline: "A quiet observation",
+    insight: `I noticed you shared something today. Even on the quieter days, showing up matters.`,
+    suggestion: text.length > 50 ? "Try breaking your thoughts into smaller pieces tomorrow." : "Consider writing a little more tomorrow. There might be more beneath the surface.",
+    affirmation: "You're doing the work. That's enough.",
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function localCoachReply(text: string): CoachReply {
+  const lower = text.toLowerCase();
+  const betterSleep = /got some sleep|slept better|slept well|good sleep|rested|didn't need to sleep in|did not need to sleep in/.test(lower);
+  const noSleep = /did not sleep|didn't sleep|no sleep|couldn't sleep|could not sleep|slept bad|insomnia/.test(lower);
+  const tired = /tired|exhausted|drained|fatigue|worn out/.test(lower);
+  const stress = /stress|anxious|overwhelmed|pressure|busy/.test(lower);
+  const interview = /interview|job interview|application|new job|hiring|resume/.test(lower);
+
+  if (betterSleep) {
+    return {
+      message:
+        "Getting real sleep changed the tone of today. The important detail is not just that you rested, it is that your body did not feel like it needed to recover as hard this morning.",
+      title: "Today I noticed...",
+      pattern: "Sleep may be tied closely to your morning energy and how much space the day feels like it has.",
+      summary: "Better sleep made today feel easier to enter.",
+      themes: ["sleep", "energy"],
+      tags: ["sleep"],
+      emotionalTone: "rested and aware",
+      followUpQuestions: ["What felt different after getting more rest?"],
+      nextStep: "Notice what helped you sleep better last night. That detail may be worth repeating.",
+      source: "local",
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  if (noSleep) {
+    return {
+      message:
+        "Not sleeping changes the whole shape of a day. What stands out is that you still checked in instead of brushing past it, and that tells me you are paying attention to what your body is asking for.",
+      title: "Today I noticed...",
+      pattern: "Sleep may be one of the first places your energy pattern shows up.",
+      summary: "Sleep was difficult, and you still checked in.",
+      themes: ["sleep", "energy"],
+      tags: ["rest"],
+      emotionalTone: "tired but reflective",
+      followUpQuestions: ["What helped you get through the day?"],
+      nextStep: "Keep tonight simple. Lower the lights, put the phone down early, and aim for rest rather than a perfect routine.",
+      source: "local",
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  if (tired) {
+    return {
+      message:
+        "This sounds like a low-energy day, not a failed one. You noticed your limits, and that matters because patterns usually start showing up through tired days first.",
+      title: "Today I noticed...",
+      pattern: "Low-energy days may be worth tracking alongside what helped you recover.",
+      summary: "Energy felt low today.",
+      themes: ["energy", "recovery"],
+      tags: ["tired"],
+      emotionalTone: "drained but aware",
+      followUpQuestions: ["What gave you even a small lift today?"],
+      nextStep: "Choose one thing to make tomorrow easier before you sleep. Keep it small enough that it feels almost too easy.",
+      source: "local",
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  if (stress) {
+    return {
+      message:
+        "There is pressure in what you shared, but also a useful signal. Tranqly is starting to learn what tends to take up space for you, and naming it is the first step toward changing your relationship with it.",
+      title: "Today I noticed...",
+      pattern: "Stress may be connected to the parts of the day that feel least spacious.",
+      summary: "Stress showed up in today's reflection.",
+      themes: ["stress", "pressure"],
+      tags: ["stress"],
+      emotionalTone: "stressed and reflective",
+      followUpQuestions: ["Where did the pressure feel strongest today?"],
+      nextStep: "Write down the one pressure you can influence tomorrow, and let the rest stay outside tonight.",
+      source: "local",
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  if (interview) {
+    return {
+      message:
+        "A job interview is not just an event on the calendar. It is a moment where you put yourself forward, tolerate uncertainty, and take a step toward a possible change.",
+      title: "Today I noticed...",
+      pattern: "Opportunity and nerves may show up together when you are moving toward something new.",
+      summary: "You took a step toward a new opportunity.",
+      themes: ["work", "growth"],
+      tags: ["work"],
+      emotionalTone: "hopeful and uncertain",
+      followUpQuestions: ["What part of the interview stayed with you most?"],
+      nextStep: "Before replaying the whole thing, name one thing you handled well.",
+      source: "local",
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  return {
+    message:
+      `You named something specific from today: "${text.slice(0, 120)}${text.length > 120 ? "..." : ""}" That gives Tranqly a real signal to learn from, especially as details like this repeat over time.`,
+    title: "Today I noticed...",
+    pattern: "Specific details are where your longer-term patterns will start to become visible.",
+    summary: text.slice(0, 140),
+    themes: ["reflection"],
+    tags: ["daily check-in"],
+    emotionalTone: "reflective",
+    followUpQuestions: ["What part of today do you want to understand better?"],
+    nextStep: "Add one sentence about how this felt in your body or mood. That is usually where the useful pattern begins.",
+    source: "local",
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function inspirationFor(text: string) {
+  const lower = text.toLowerCase();
+  if (text.trim().length < 8) {
+    return "Start with one true sentence.";
+  }
+  if (/(tired|hard|rough|stress|bad|drained)/.test(lower)) {
+    return "A hard day can still teach you what needs care.";
+  }
+  if (/(walk|run|gym|outside|workout)/.test(lower)) {
+    return "You moved your body. That is practical self-respect.";
+  }
+  if (/(work|meeting|client|project|job)/.test(lower)) {
+    return "You showed up inside real pressure. That counts.";
+  }
+  return "There is something here you cared enough to name.";
+}
+
+function selectMobilePrompt(
+  entries: CheckIn[],
+  sanctuaryTheme: SanctuaryThemeKey,
+  mood?: string | null,
+  offset = 0
+) {
+  const latest = entries[0]?.text.toLowerCase() ?? "";
+  const yesterday = entries[1]?.text.toLowerCase() ?? "";
+  const recent = entries.slice(0, 20).map((entry) => entry.text.toLowerCase());
+  const recentPromptTypes = entries.slice(0, 7).map((entry) => entry.promptType).filter(Boolean) as string[];
+  const seed = mobilePromptSeed(offset) + entries.length;
+  const matchCount = (keywords: string[]) =>
+    recent.filter((text) => keywords.some((keyword) => text.includes(keyword))).length;
+  const usedRecently = (prompt: string) =>
+    entries.some(
+      (entry) => entry.prompt === prompt && new Date(entry.createdAt).getTime() >= Date.now() - 30 * 86_400_000
+    );
+  const candidates: { prompt: string; whyThisQuestion: string; promptType: string; priority: number }[] = [];
+
+  if (/(panic|hopeless|breaking|numb)/.test(latest) || mood === "rough") {
+    candidates.push({
+      prompt: mobileRotate(
+        [
+          "What deserves a little kindness right now?",
+          "What would make tonight feel a little lighter?",
+          "What's one small thing you can let be enough today?",
+        ],
+        seed
+      ),
+      whyThisQuestion: "I'm asking gently because today sounds heavier than usual.",
+      promptType: "gentle_reset",
+      priority: 1,
+    });
+  }
+
+  const topicCounts = MOBILE_TOPIC_GROUPS.map((group) => ({
+    key: group.key,
+    count: matchCount([...group.keywords]),
+  })).sort((a, b) => b.count - a.count);
+  const topTopic = topicCounts[0];
+
+  if (topTopic?.key === "sleep" && topTopic.count > 0) {
+    candidates.push({
+      prompt: mobileRotate(
+        [
+          "Rest has been showing up a lot lately. What did your body seem to need today?",
+          "Sleep and energy have been linked in your reflections. What gave you energy today, even a little?",
+          "What did your energy seem to be asking for today?",
+        ],
+        seed
+      ),
+      whyThisQuestion: "I'm asking because rest and energy have been showing up together.",
+      promptType: "energy_prompt",
+      priority: 2,
+    });
+  }
+
+  if (topTopic?.key === "work" && topTopic.count > 0) {
+    candidates.push({
+      prompt: mobileRotate(
+        [
+          "Work has been taking a lot of space lately. Did today feel lighter, heavier, or just different?",
+          "Work has been close to the surface lately. What part of today stayed with you most?",
+          "What changed for you today around work, pressure, or pace?",
+        ],
+        seed
+      ),
+      whyThisQuestion: "I'm asking because work has taken a lot of space in your reflections.",
+      promptType: "recurring_pattern",
+      priority: 3,
+    });
+  }
+
+  if (topTopic?.key === "stress" && topTopic.count > 0) {
+    candidates.push({
+      prompt: mobileRotate(
+        [
+          "You've been carrying a lot lately. What helped you get through today?",
+          "Pressure has been building in your recent reflections. What helped you feel a little steadier today?",
+          "What took the most out of you today, and what gave a little back?",
+        ],
+        seed
+      ),
+      whyThisQuestion: "I'm asking because your recent check-ins have felt heavier.",
+      promptType: "recurring_pattern",
+      priority: 3,
+    });
+  }
+
+  if (topicCounts.some((item) => item.key === "outside" && item.count >= 2)) {
+    candidates.push({
+      prompt: mobileRotate(
+        [
+          "Did you get a chance to do something that usually clears your head?",
+          "What helped you feel a little more steady today?",
+          "Did anything support you more than you expected today?",
+        ],
+        seed
+      ),
+      whyThisQuestion: "I'm asking because getting outside seems to help.",
+      promptType: "helpful_action",
+      priority: 4,
+    });
+  }
+
+  if (topicCounts.some((item) => item.key === "gratitude" && item.count > 0)) {
+    candidates.push({
+      prompt: mobileRotate(
+        [
+          "What felt worth caring about today?",
+          "What mattered most to you today?",
+          "Where did you feel most like yourself today?",
+        ],
+        seed
+      ),
+      whyThisQuestion: "I'm asking because what matters to you is becoming clearer.",
+      promptType: "values_prompt",
+      priority: 5,
+    });
+  }
+
+  if (entries.length >= 2 && latest && yesterday && latest !== yesterday) {
+    candidates.push({
+      prompt: mobileRotate(
+        [
+          "Did today feel lighter or heavier than yesterday?",
+          "What felt different about today?",
+          "What surprised you about your mood or energy today?",
+        ],
+        seed
+      ),
+      whyThisQuestion: "I'm asking because your recent days have not all felt the same.",
+      promptType: "contrast_prompt",
+      priority: 6,
+    });
+  }
+
+  candidates.push({
+    prompt: mobileRotate(MOBILE_SANCTUARY_PROMPTS[sanctuaryTheme] ?? MOBILE_SANCTUARY_PROMPTS.twilight, seed),
+    whyThisQuestion: "I'm asking because this sanctuary is about slowing down and noticing what's growing.",
+    promptType: "sanctuary_prompt",
+    priority: 7,
+  });
+
+  candidates.push({
+    prompt: DAILY_PROMPTS[(mobilePromptSeed(offset) + offset) % DAILY_PROMPTS.length],
+    whyThisQuestion: "I'm asking to help you notice one honest part of today.",
+    promptType: "generic_fallback",
+    priority: 8,
+  });
+
+  const selected =
+    candidates
+      .sort((a, b) => a.priority - b.priority)
+      .find((candidate) => !recentPromptTypes.includes(candidate.promptType) && !usedRecently(candidate.prompt)) ??
+    candidates[candidates.length - 1];
+
+  return selected;
+}
+
+function greetingForNow() {
+  const hour = new Date().getHours();
+  if (hour < 5) return "Still up? Be gentle with yourself";
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
+  return "Good evening";
+}
+
+type MonthIconType = "calm" | "consistency" | "gratitude" | "stress";
+
+const monthIconColors: Record<MonthIconType, string> = {
+  calm: "#A6A6FF",
+  consistency: "#76E0D3",
+  gratitude: "#F5BD6D",
+  stress: "#FF7272",
+};
+
+function MonthIcon({
+  type,
+  size = 68,
+}: {
+  type: MonthIconType;
+  size?: number;
+}) {
+  const color = monthIconColors[type];
+
+  return (
+    <Svg width={size} height={size} viewBox="0 0 96 96" fill="none">
+      <Circle cx={48} cy={48} r={38} stroke={color} strokeWidth={3} opacity={0.92} />
+      {type === "calm" && (
+        <>
+          <Path
+            d="M48 61c-9-11-9-24 0-34 9 10 9 23 0 34Z"
+            stroke={color}
+            strokeWidth={3.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <Path
+            d="M47 61c-13-1-22-8-27-20 13 1 22 8 27 20ZM49 61c13-1 22-8 27-20-13 1-22 8-27 20Z"
+            stroke={color}
+            strokeWidth={3.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <Path
+            d="M28 70c9-4 31-4 40 0M34 76c8-2 20-2 28 0"
+            stroke={color}
+            strokeWidth={3.5}
+            strokeLinecap="round"
+          />
+        </>
+      )}
+      {type === "consistency" && (
+        <>
+          <Path
+            d="M28 31h37a5 5 0 0 1 5 5v23a5 5 0 0 1-5 5H31a5 5 0 0 1-5-5V36a5 5 0 0 1 5-5Z"
+            stroke={color}
+            strokeWidth={3.5}
+            strokeLinejoin="round"
+          />
+          <Path d="M26 43h44M36 25v13M58 25v13" stroke={color} strokeWidth={3.5} strokeLinecap="round" />
+          <Path d="M36 50h7M50 50h7M36 59h7" stroke={color} strokeWidth={5} strokeLinecap="round" />
+          <Circle cx={65} cy={66} r={15} fill="#123733" stroke={color} strokeWidth={3.5} />
+          <Path d="M58 66l5 5 10-12" stroke={color} strokeWidth={3.5} strokeLinecap="round" strokeLinejoin="round" />
+        </>
+      )}
+      {type === "gratitude" && (
+        <>
+          <Path
+            d="M48 35c-4-8-17-7-17 4 0 9 12 16 17 22 5-6 17-13 17-22 0-11-13-12-17-4Z"
+            stroke={color}
+            strokeWidth={3.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <Path
+            d="M31 71V57c0-7-7-7-7 0v8c0 7 10 9 14 16M65 71V57c0-7 7-7 7 0v8c0 7-10 9-14 16"
+            stroke={color}
+            strokeWidth={3.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <Path d="M35 63l8 7M61 63l-8 7" stroke={color} strokeWidth={3.5} strokeLinecap="round" />
+        </>
+      )}
+      {type === "stress" && (
+        <>
+          <Path
+            d="M47 31c-7-7-20-2-20 9-6 2-8 12-1 17-3 8 7 15 14 10 2 7 13 7 15-1 8 2 14-6 10-13 5-7 0-17-8-16-1-8-7-10-10-6Z"
+            stroke={color}
+            strokeWidth={3.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <Path d="M47 31v35M34 42c4 2 6 5 6 9M31 56c4 1 7 3 9 7M56 45c-3 2-5 5-5 9" stroke={color} strokeWidth={3.5} strokeLinecap="round" />
+          <Circle cx={68} cy={66} r={13} fill="#191A22" stroke={color} strokeWidth={3.5} />
+          <Path d="M68 58v14M62 67l6 6 6-6" stroke={color} strokeWidth={3.5} strokeLinecap="round" strokeLinejoin="round" />
+        </>
+      )}
+    </Svg>
+  );
+}
+
+function ThemeIcon({
+  type,
+  color,
+  size = 34,
+}: {
+  type: SanctuaryThemeKey;
+  color: string;
+  size?: number;
+}) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 48 48" fill="none">
+      {type === "twilight" ? (
+        <>
+          <Path d="M31 7c-8 2-14 9-14 17 0 8 6 15 14 17-3 2-6 3-10 3C11 44 4 36 4 26 4 15 12 7 23 7c3 0 6 0 8 0Z" stroke={color} strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" />
+          <Path d="M34 17l2 4 4 2-4 2-2 4-2-4-4-2 4-2 2-4Z" stroke={color} strokeWidth={2.5} strokeLinejoin="round" />
+        </>
+      ) : null}
+      {type === "sunrise" ? (
+        <>
+          <Path d="M8 31h32M14 31a10 10 0 0 1 20 0" stroke={color} strokeWidth={3} strokeLinecap="round" />
+          <Path d="M24 8v7M9 22l6 3M39 22l-6 3M14 13l5 5M34 13l-5 5" stroke={color} strokeWidth={2.5} strokeLinecap="round" />
+        </>
+      ) : null}
+      {type === "ocean" ? (
+        <>
+          <Path d="M9 30c4-5 8-5 12 0s8 5 12 0 6-4 8-2" stroke={color} strokeWidth={3} strokeLinecap="round" />
+          <Path d="M13 23c4-5 8-5 12 0s7 4 10 1" stroke={color} strokeWidth={2.5} strokeLinecap="round" opacity={0.75} />
+          <Path d="M31 13c-9 1-15 7-16 16 5-6 10-8 18-6" stroke={color} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
+        </>
+      ) : null}
+      {type === "forest" ? (
+        <>
+          <Path d="M24 6 10 26h9L7 42h34L29 26h9L24 6Z" stroke={color} strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" />
+          <Path d="M24 27v15" stroke={color} strokeWidth={3} strokeLinecap="round" />
+        </>
+      ) : null}
+      {type === "blossom" ? (
+        <>
+          {[0, 72, 144, 216, 288].map((rotation) => (
+            <Ellipse key={rotation} cx={24} cy={15} rx={6} ry={11} stroke={color} strokeWidth={2.7} transform={`rotate(${rotation} 24 24)`} />
+          ))}
+          <Circle cx={24} cy={24} r={4} fill={color} />
+          <Path d="M24 31v10" stroke={color} strokeWidth={2.7} strokeLinecap="round" />
+        </>
+      ) : null}
+      {type === "mountain" ? (
+        <>
+          <Path d="M5 39 19 14l9 14 5-8 10 19H5Z" stroke={color} strokeWidth={3} strokeLinejoin="round" />
+          <Path d="m19 14 3 10 6 4M33 20l-3 9" stroke={color} strokeWidth={2.5} strokeLinecap="round" />
+        </>
+      ) : null}
+      {type === "misty" || type === "cloud" ? (
+        <>
+          <Path d="M14 34h22a8 8 0 0 0 0-16 12 12 0 0 0-23-3A9.5 9.5 0 0 0 14 34Z" stroke={color} strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" />
+          <Path d="M12 40h25" stroke={color} strokeWidth={2.5} strokeLinecap="round" opacity={0.72} />
+        </>
+      ) : null}
+      {type === "desert" ? (
+        <Path d="M24 41V14a7 7 0 0 1 14 0v8M24 25H13a6 6 0 0 1-6-6v-5M24 31h12a6 6 0 0 0 6-6v-5M13 41h22" stroke={color} strokeWidth={3} strokeLinecap="round" />
+      ) : null}
+      {type === "snowfall" ? (
+        <>
+          <Path d="M24 6v36M9 15l30 18M39 15 9 33" stroke={color} strokeWidth={3} strokeLinecap="round" />
+          <Circle cx={24} cy={24} r={4} fill={color} />
+        </>
+      ) : null}
+      {type === "northern" ? (
+        <>
+          <Path d="M8 34c7-19 12-19 16 0 5-26 11-26 17-3" stroke={color} strokeWidth={3} strokeLinecap="round" />
+          <Path d="m13 9 2 5 5 2-5 2-2 5-2-5-5-2 5-2ZM34 8l1.5 3.5L39 13l-3.5 1.5L34 18l-1.5-3.5L29 13l3.5-1.5Z" stroke={color} strokeWidth={2} strokeLinejoin="round" />
+        </>
+      ) : null}
+    </Svg>
+  );
+}
+
+function LockMark({ color = "#A9B3C3", size = 13 }: { color?: string; size?: number }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 16 16" fill="none">
+      <Path
+        d="M5 7V5.6a3 3 0 0 1 6 0V7"
+        stroke={color}
+        strokeWidth={1.8}
+        strokeLinecap="round"
+      />
+      <Rect x={3.5} y={7} width={9} height={6.5} rx={1.8} fill={color} opacity={0.9} />
+    </Svg>
+  );
+}
+
+function ThemePictureNative({
+  theme,
+  large = false,
+}: {
+  theme: (typeof SANCTUARY_THEMES)[number];
+  large?: boolean;
+}) {
+  const isSunrise = theme.key === "sunrise";
+  const isOcean = theme.key === "ocean";
+  const isBlossom = theme.key === "blossom";
+  const skyId = `themeSky${theme.key}`;
+  const groundId = `themeGround${theme.key}`;
+  const lightId = `themeLight${theme.key}`;
+
+  return (
+    <Svg width="100%" height="100%" viewBox="0 0 520 320" preserveAspectRatio="xMidYMid slice" style={StyleSheet.absoluteFill}>
+      <Defs>
+        <SvgLinearGradient id={skyId} x1="0" y1="0" x2="1" y2="1">
+          <Stop stopColor={theme.panel[0]} />
+          <Stop offset={0.52} stopColor={theme.panel[1]} />
+          <Stop offset={1} stopColor={theme.panel[2]} />
+        </SvgLinearGradient>
+        <SvgLinearGradient id={groundId} x1="0" y1="190" x2="520" y2="320">
+          <Stop stopColor={isOcean ? "#123F64" : isBlossom ? "#4A2946" : "#245F42"} />
+          <Stop offset={1} stopColor="#08110F" />
+        </SvgLinearGradient>
+        <SvgLinearGradient id={lightId} x1="250" y1="0" x2="520" y2="260">
+          <Stop stopColor={theme.accent} stopOpacity={0.48} />
+          <Stop offset={1} stopColor={theme.accent} stopOpacity={0} />
+        </SvgLinearGradient>
+      </Defs>
+      <Rect width={520} height={320} fill={`url(#${skyId})`} />
+      <Rect width={520} height={320} fill={`url(#${lightId})`} opacity={0.7} />
+      {isSunrise ? (
+        <Circle cx={342} cy={126} r={36} fill="#F5BD6D" opacity={0.92} />
+      ) : theme.key === "twilight" ? (
+        <Path d="M377 72c-31 14-38 55-9 76-39-8-58-49-43-82 9-21 29-34 52-36Z" fill="#FFD9A3" />
+      ) : null}
+      <Path d="M-30 178C72 116 156 132 230 170C318 214 397 128 552 174V320H-30Z" fill="#101A2A" opacity={0.6} />
+      <Path d="M-30 222C72 184 142 190 223 210C316 232 399 186 552 204V320H-30Z" fill={`url(#${groundId})`} />
+      {isOcean ? (
+        <>
+          <Path d="M0 213c52-20 88-14 132-1s84 12 134-5 91-14 151 6 85 15 133-8v115H0Z" fill="#123F64" opacity={0.84} />
+          <Path d="M38 232c54-18 84 16 140-2s98 12 158-3 90 11 145-4" stroke="#60A5FA" strokeWidth={6} strokeLinecap="round" opacity={0.7} />
+        </>
+      ) : (
+        <>
+          <G transform={`translate(${large ? 218 : 250} 167) scale(${large ? 1.12 : 0.95})`}>
+            <Path d="M-10 76c6-36 8-76 1-108h22C7 1 9 40 19 76Z" fill="#5B3F34" />
+            <Path d="M1 3c-16 24-36 40-66 54M8-2c20 25 42 39 72 51" stroke="#332827" strokeWidth={8} strokeLinecap="round" />
+            <Circle cx={-52} cy={-30} r={45} fill={isBlossom ? "#8D5677" : "#376F50"} />
+            <Circle cx={0} cy={-62} r={55} fill={isBlossom ? "#B06A95" : "#4C8B61"} />
+            <Circle cx={56} cy={-27} r={47} fill={isBlossom ? "#7D4A72" : "#34694E"} />
+            <Circle cx={-3} cy={-25} r={52} fill={isBlossom ? "#965682" : "#2F6D50"} />
+          </G>
+          <G transform="translate(350 177) scale(0.75)">
+            <Path d="M0 38 42 4l42 34v62H0Z" fill="#3A2F32" stroke="#6F5A52" strokeWidth={3} />
+            <Path d="M-7 40 42 0l50 40" stroke="#73809A" strokeWidth={10} strokeLinecap="round" />
+            <Rect x={55} y={48} width={16} height={18} fill="#F5BD6D" opacity={0.86} />
+          </G>
+          <Ellipse cx={255} cy={244} rx={86} ry={24} fill="#1E6470" opacity={0.9} />
+          <Path d="M188 230c38-28 88-28 128 0" stroke="#C08A55" strokeWidth={10} strokeLinecap="round" />
+        </>
+      )}
+      <Circle cx={70} cy={246} r={8} fill={isBlossom ? "#F472B6" : "#F39AC6"} />
+      <Circle cx={92} cy={235} r={7} fill="#B79CFF" />
+      <Circle cx={115} cy={251} r={8} fill="#F5BD6D" />
+    </Svg>
+  );
+}
+
+function getSanctuaryTheme(key: SanctuaryThemeKey) {
+  return SANCTUARY_THEMES.find((theme) => theme.key === key) || SANCTUARY_THEMES[0];
+}
+
+function isThemeUnlocked(theme: (typeof SANCTUARY_THEMES)[number], checkInCount: number, premium = false) {
+  if (theme.unlockType === "plus") return premium;
+  if (theme.unlockType === "seasonal") return false;
+  return checkInCount >= theme.unlockDays;
+}
+
+function nextThemeUnlock(checkInCount: number, premium = false) {
+  return [...SANCTUARY_THEMES]
+    .filter((theme) => theme.unlockType !== "seasonal")
+    .sort((a, b) => a.unlockDays - b.unlockDays)
+    .find((theme) => theme.unlockType === "reflections" && !isThemeUnlocked(theme, checkInCount, premium)) ?? null;
+}
+
+function sanctuaryThemesByUnlock() {
+  return [...SANCTUARY_THEMES].sort((a, b) => {
+    const aRank = a.unlockType === "reflections" ? 0 : a.unlockType === "plus" ? 1 : 2;
+    const bRank = b.unlockType === "reflections" ? 0 : b.unlockType === "plus" ? 1 : 2;
+    if (aRank !== bRank) return aRank - bRank;
+    return a.unlockDays - b.unlockDays;
+  });
+}
+
+function themeProgressLabel(theme: (typeof SANCTUARY_THEMES)[number], checkInCount: number, premium = false) {
+  if (isThemeUnlocked(theme, checkInCount, premium)) return "Unlocked";
+  if (theme.unlockType === "plus") return "Tranqly Plus";
+  if (theme.unlockType === "seasonal") return "Seasonal theme";
+  return `Unlocks at ${theme.unlockDays} reflections`;
+}
+
+function growthNoticeFor(previousCount: number, nextCount: number) {
+  const unlocked = [...SANCTUARY_THEMES]
+    .sort((a, b) => a.unlockDays - b.unlockDays)
+    .find((theme) => theme.unlockType === "reflections" && previousCount < theme.unlockDays && nextCount >= theme.unlockDays);
+  return unlocked ? `${unlocked.label} unlocked. A new sanctuary is ready for you.` : "";
+}
+
+type SanctuaryThemeScores = {
+  calm: number;
+  consistency: number;
+  gratitude: number;
+  stress: number;
+  smallWins: number;
+  nature: number;
+};
+
+type SanctuaryProgress = {
+  totalCheckIns: number;
+  unlockedElements: string[];
+  treeStage: number;
+  flowerStage: number;
+  pondStage: number;
+  cabinStage: number;
+  nextUnlock: { name: string; daysRemaining: number; unlockDay: number } | null;
+};
+
+const SANCTUARY_MILESTONES = [
+  { day: 1, name: "Seed" },
+  { day: 7, name: "Tree" },
+  { day: 14, name: "More flowers" },
+  { day: 21, name: "Bushes" },
+  { day: 28, name: "Rocks" },
+  { day: 42, name: "Pond" },
+  { day: 56, name: "Butterflies" },
+  { day: 70, name: "Bench" },
+  { day: 84, name: "Birds" },
+  { day: 100, name: "Lantern" },
+  { day: 140, name: "Fireflies" },
+  { day: 180, name: "Cabin" },
+  { day: 365, name: "Full sanctuary" },
+];
+
+const SANCTUARY_IMAGES = {
+  birds: [
+    require("./assets/sanctuary/bird_s1.png"),
+    require("./assets/sanctuary/bird_s2.png"),
+    require("./assets/sanctuary/birs_s3.png"),
+  ],
+  butterfly: require("./assets/sanctuary/unique_butterfly.png"),
+  bush: require("./assets/sanctuary/unique_bush_1.png"),
+  cabin: require("./assets/sanctuary/unique_cabin.png"),
+  clouds: {
+    evening: require("./assets/sanctuary/could_s_evening.png"),
+    moon: require("./assets/sanctuary/could_s_moon.png"),
+    night: require("./assets/sanctuary/could_s_night.png"),
+    partly: require("./assets/sanctuary/cloud_s_partly.png"),
+  },
+  flowers: [
+    require("./assets/sanctuary/flower_s1.png"),
+    require("./assets/sanctuary/flower_s2.png"),
+    require("./assets/sanctuary/flower_s3.png"),
+  ],
+  ground: require("./assets/sanctuary/unique_ground.png"),
+  lantern: require("./assets/sanctuary/unique_lantern.png"),
+  ponds: [
+    require("./assets/sanctuary/pond_s_small.png"),
+    require("./assets/sanctuary/pond_s_lilypads.png"),
+    require("./assets/sanctuary/pond_s_reeds.png"),
+    require("./assets/sanctuary/pond_s_bridge.png"),
+  ],
+  bridge: require("./assets/sanctuary/pond_s_bridge.png"),
+  rocks: require("./assets/sanctuary/unique_rocks.png"),
+  seasons: {
+    spring: require("./assets/sanctuary/season_spring.png"),
+    summer: require("./assets/sanctuary/season_summer.png"),
+    fall: require("./assets/sanctuary/season_fall.png"),
+    winter: require("./assets/sanctuary/season_winter.png"),
+  },
+  trees: [
+    require("./assets/sanctuary/tree_s1.png"),
+    require("./assets/sanctuary/tree_s2.png"),
+    require("./assets/sanctuary/tree_s4.png"),
+    require("./assets/sanctuary/tree_s5.png"),
+    require("./assets/sanctuary/tree_s6.png"),
+    require("./assets/sanctuary/tree_s7.png"),
+  ],
+};
+
+type SanctuaryAnimation =
+  | "cloud"
+  | "tree"
+  | "butterfly"
+  | "bird"
+  | "lantern"
+  | "pond"
+  | "firefly";
+
+type SanctuaryLayerLayout = {
+  x: number;
+  y: number;
+  width: number;
+  scale: number;
+  anchor?: "center" | "bottom";
+  rotate?: number;
+  z: number;
+  opacity?: number;
+  animation?: SanctuaryAnimation;
+  optional?: boolean;
+};
+
+const SANCTUARY_CANVAS = { width: 1000, height: 700 };
+
+const SANCTUARY_LAYOUT: Record<string, SanctuaryLayerLayout> = {
+  starsLeft: { x: 116, y: 132, width: 12, scale: 1, z: 1, animation: "firefly", optional: true },
+  starsMid: { x: 650, y: 120, width: 11, scale: 1, z: 1, animation: "firefly", optional: true },
+  cloudLeft: { x: 148, y: 222, width: 122, scale: 1, z: 2, opacity: 0.28, animation: "cloud", optional: true },
+  cloudRight: { x: 830, y: 112, width: 112, scale: 1, z: 2, opacity: 0.42, animation: "cloud" },
+  bird: { x: 695, y: 250, width: 44, scale: 1, rotate: -8, z: 3, opacity: 0.78, animation: "bird" },
+  cabin: { x: 770, y: 508, width: 190, scale: 1, anchor: "bottom", z: 6, opacity: 0.96 },
+  pond: { x: 515, y: 555, width: 360, scale: 1, z: 7, animation: "pond" },
+  bushesLeft: { x: 275, y: 512, width: 150, scale: 1, anchor: "bottom", z: 8 },
+  bushesRight: { x: 690, y: 516, width: 138, scale: 1, anchor: "bottom", z: 8 },
+  tree: { x: 415, y: 530, width: 365, scale: 1, anchor: "bottom", z: 9, animation: "tree" },
+  bridge: { x: 515, y: 520, width: 230, scale: 1, z: 10 },
+  rocksLeft: { x: 225, y: 596, width: 120, scale: 1, anchor: "bottom", z: 11 },
+  rocksRight: { x: 780, y: 598, width: 116, scale: 1, anchor: "bottom", z: 11 },
+  flowersLeft: { x: 190, y: 580, width: 156, scale: 1, anchor: "bottom", z: 12 },
+  flowersRight: { x: 745, y: 580, width: 108, scale: 1, anchor: "bottom", z: 12 },
+  lantern: { x: 680, y: 526, width: 72, scale: 1, anchor: "bottom", z: 13, animation: "lantern" },
+  butterfly: { x: 252, y: 300, width: 48, scale: 1, rotate: -8, z: 14, animation: "butterfly" },
+  fireflyA: { x: 184, y: 226, width: 6, scale: 1, z: 15, animation: "firefly", optional: true },
+  fireflyB: { x: 585, y: 178, width: 6, scale: 1, z: 15, animation: "firefly", optional: true },
+  fireflyC: { x: 818, y: 258, width: 6, scale: 1, z: 15, animation: "firefly", optional: true },
+};
+
+function todayKeyFromDate(date: Date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+type JourneyTagKey =
+  | "calm"
+  | "sad"
+  | "stress"
+  | "gratitude"
+  | "exercise"
+  | "family"
+  | "work";
+
+const JOURNEY_TAGS: { key: JourneyTagKey; label: string; pattern: RegExp }[] = [
+  { key: "calm", label: "Calm", pattern: /calm|peace|slow|quiet|rest|walk|outside|breathe|present/i },
+  { key: "sad", label: "Sad", pattern: /sad|lonely|down|cry|hurt|grief|miss/i },
+  { key: "stress", label: "Stress", pattern: /stress|busy|overwhelm|anxious|pressure|tired|hard|deadline/i },
+  { key: "gratitude", label: "Gratitude", pattern: /grateful|thankful|appreciate|love|proud|good|win/i },
+  { key: "exercise", label: "Exercise", pattern: /walk|run|gym|workout|exercise|outside|hike|bike/i },
+  { key: "family", label: "Family", pattern: /family|mom|dad|parent|child|kids|partner|wife|husband|sister|brother/i },
+  { key: "work", label: "Work", pattern: /work|job|meeting|boss|client|deadline|office|project/i },
+];
+
+function JourneyTagIcon({ type, color }: { type: JourneyTagKey; color: string }) {
+  if (type === "work") {
+    return (
+      <Svg width={13} height={13} viewBox="0 0 24 24" fill="none">
+        <Path d="M9 7V5.8A1.8 1.8 0 0 1 10.8 4h2.4A1.8 1.8 0 0 1 15 5.8V7" stroke={color} strokeWidth={2} strokeLinecap="round" />
+        <Path d="M5 7h14a2 2 0 0 1 2 2v8a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V9a2 2 0 0 1 2-2Z" stroke={color} strokeWidth={2} />
+        <Path d="M9 12h6" stroke={color} strokeWidth={2} strokeLinecap="round" />
+      </Svg>
+    );
+  }
+  if (type === "stress") {
+    return (
+      <Svg width={13} height={13} viewBox="0 0 24 24" fill="none">
+        <Path d="M9 18a4 4 0 0 1-4-4c0-1.7 1-3.2 2.5-3.8A4.5 4.5 0 0 1 16 8.5a3.8 3.8 0 0 1 3 6.2" stroke={color} strokeWidth={2} strokeLinecap="round" />
+        <Path d="M12 12v4M16 12v3" stroke={color} strokeWidth={2} strokeLinecap="round" />
+      </Svg>
+    );
+  }
+  if (type === "gratitude" || type === "family") {
+    return (
+      <Svg width={13} height={13} viewBox="0 0 24 24" fill="none">
+        <Path d="M12 20s-7-4.3-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.7-7 10-7 10Z" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+      </Svg>
+    );
+  }
+  if (type === "exercise") {
+    return (
+      <Svg width={13} height={13} viewBox="0 0 24 24" fill="none">
+        <Path d="M6 19c2.5-1.2 4.2-3.1 5-5.7M11 13.3l3 2.7M10 8l3 2 3-1" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+        <Circle cx={9} cy={5} r={2} stroke={color} strokeWidth={2} />
+      </Svg>
+    );
+  }
+  if (type === "sad") {
+    return (
+      <Svg width={13} height={13} viewBox="0 0 24 24" fill="none">
+        <Path d="M12 21c3.5-3.2 6-6.2 6-10a6 6 0 0 0-12 0c0 3.8 2.5 6.8 6 10Z" stroke={color} strokeWidth={2} />
+        <Path d="M9 11h.01M15 11h.01M9 16c1.8-1.2 4.2-1.2 6 0" stroke={color} strokeWidth={2} strokeLinecap="round" />
+      </Svg>
+    );
+  }
+  return (
+    <Svg width={13} height={13} viewBox="0 0 24 24" fill="none">
+      <Path d="M12 19c-4-4.4-4-9.5 0-14 4 4.5 4 9.6 0 14Z" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+      <Path d="M5 18c3.3-1.4 10.7-1.4 14 0" stroke={color} strokeWidth={2} strokeLinecap="round" />
+    </Svg>
+  );
+}
+
+function journeyTagsForText(text: string) {
+  const tags = JOURNEY_TAGS.filter((tag) => tag.pattern.test(text));
+  return tags.length ? tags : [JOURNEY_TAGS[0]];
+}
+
+function journeyCount(entries: CheckIn[], pattern: RegExp) {
+  return entries.reduce((total, entry) => total + (entry.text.match(pattern) ?? []).length, 0);
+}
+
+function buildMobileJourney(entries: CheckIn[]) {
+  const sorted = [...entries].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const activeTags = JOURNEY_TAGS.map((tag) => ({
+    ...tag,
+    count: sorted.filter((entry) => tag.pattern.test(entry.text)).length,
+  })).filter((tag) => tag.count > 0).sort((a, b) => b.count - a.count);
+  const workStress = journeyCount(sorted, /work|job|meeting|deadline|boss|client/gi);
+  const walks = journeyCount(sorted, /walk|outside|hike|park|fresh air/gi);
+  const gratitude = journeyCount(sorted, /grateful|thankful|appreciate|love|proud|win/gi);
+  const stress = journeyCount(sorted, /stress|overwhelm|anxious|pressure|hard|tired/gi);
+  const calm = journeyCount(sorted, /calm|peace|slow|quiet|rest|present/gi);
+  const strongest = sorted.find((entry) => /proud|finally|present|better|win|grateful|calm/i.test(entry.text)) ?? sorted[0];
+  const remember = sorted.find((entry) => /walk|smiled|family|outside|proud|present/i.test(entry.text)) ?? sorted[sorted.length - 1];
+  return {
+    activeTags,
+    memoryFacts: [
+      walks > 0 ? `Walking or outside time has appeared ${walks} times.` : "Tranqly is learning what clears your mind.",
+      workStress > 0 ? `Work has appeared ${workStress} times.` : "Work patterns will appear as you check in.",
+      gratitude > 0 ? "Gratitude is becoming a visible thread." : "Gratitude patterns are still forming.",
+      calm >= stress ? "Calmer language is keeping pace with stress." : "Stress is worth watching this month.",
+    ],
+    strongest,
+    remember,
+    chapters: [
+      calm >= stress ? "Finding Calm" : "Understanding Stress",
+      walks > 2 ? "Returning Outside" : "Building Consistency",
+      gratitude > 2 ? "Learning Gratitude" : "Noticing Patterns",
+    ],
+    relationship: [
+      `${sorted.length} reflection${sorted.length === 1 ? "" : "s"} saved.`,
+      workStress ? "Work stress became easier to spot." : "Tranqly is watching for stress patterns.",
+      walks ? "Outside time is becoming part of the map." : "Helpful habits will appear here.",
+      gratitude ? "Gratitude started showing up clearly." : "Gratitude trends are still forming.",
+    ],
+    counts: { workStress, walks, gratitude, stress, calm },
+  };
+}
+
+function sanctuaryThemeScoresFromCheckIns(entries: CheckIn[]): SanctuaryThemeScores {
+  const text = entries.map((entry) => entry.text).join(" ").toLowerCase();
+  const count = (pattern: RegExp) => (text.match(pattern) ?? []).length;
+  const total = Math.max(1, entries.length);
+  const calmHits = count(/calm|peace|slow|quiet|rest|outside|walk|breathe|breath/g);
+  const gratitudeHits = count(/grateful|thankful|appreciate|good|happy|love|win|proud/g);
+  const stressHits = count(/stress|busy|overwhelm|tired|anxious|hard|pressure/g);
+  const winHits = count(/win|finished|proud|progress|better|did it|showed up/g);
+  const natureHits = count(/outside|walk|tree|sun|garden|bird|water|pond|nature/g);
+
+  return {
+    calm: Math.min(1, calmHits / total),
+    consistency: Math.min(1, total / 30),
+    gratitude: Math.min(1, gratitudeHits / total),
+    stress: Math.min(1, stressHits / total),
+    smallWins: Math.min(1, winHits / total),
+    nature: Math.min(1, natureHits / total),
+  };
+}
+
+function getSanctuaryProgress(
+  totalCheckIns: number,
+  scores: SanctuaryThemeScores
+): SanctuaryProgress {
+  const unlockedElements = ["ground", "sky"];
+  if (totalCheckIns >= 1) unlockedElements.push("seed");
+  if (totalCheckIns >= 7) unlockedElements.push("tree", "flowers");
+  if (totalCheckIns >= 21) unlockedElements.push("bushes");
+  if (totalCheckIns >= 28) unlockedElements.push("rocks");
+  if (totalCheckIns >= 42) unlockedElements.push("pond");
+  if (totalCheckIns >= 56 || scores.nature > 0.45) unlockedElements.push("butterflies");
+  if (totalCheckIns >= 70) unlockedElements.push("bench");
+  if (totalCheckIns >= 84 || scores.nature > 0.65) unlockedElements.push("birds");
+  if (totalCheckIns >= 100) unlockedElements.push("lantern");
+  if (totalCheckIns >= 140 || scores.smallWins > 0.5) unlockedElements.push("fireflies");
+  if (totalCheckIns >= 180) unlockedElements.push("cabin");
+
+  const next = SANCTUARY_MILESTONES.find((milestone) => totalCheckIns < milestone.day);
+
+  return {
+    totalCheckIns,
+    unlockedElements: Array.from(new Set(unlockedElements)),
+    treeStage: Math.min(6, Math.max(0, Math.floor(totalCheckIns / 14) + (scores.consistency > 0.7 ? 1 : 0))),
+    flowerStage: Math.min(5, Math.max(0, Math.floor(totalCheckIns / 14) + (scores.gratitude > 0.5 ? 1 : 0))),
+    pondStage: totalCheckIns >= 42 ? Math.min(4, Math.max(1, Math.floor((totalCheckIns - 28) / 28) + (scores.calm > 0.6 ? 1 : 0))) : 0,
+    cabinStage: totalCheckIns >= 365 ? 2 : totalCheckIns >= 180 ? 1 : 0,
+    nextUnlock: next
+      ? {
+          name: next.name,
+          daysRemaining: next.day - totalCheckIns,
+          unlockDay: next.day,
+        }
+      : null,
+  };
+}
+
+function SanctuaryScene({
+  progress,
+  compact = false,
+}: {
+  progress: SanctuaryProgress;
+  compact?: boolean;
+}) {
+  const [availableWidth, setAvailableWidth] = useState(0);
+  const windowWidth = useWindowDimensions().width;
+  const mode = compact ? "card" : "full";
+  const aspectRatio = mode === "card" ? 1.28 : windowWidth >= 768 ? 1.58 : 1.45;
+  const maxSceneWidth = mode === "card" ? 620 : windowWidth >= 1024 ? 900 : 760;
+  const maxSceneHeight = mode === "card" ? 430 : 620;
+  const measuredWidth = availableWidth || Math.max(320, windowWidth - 32);
+  const sceneWidth = Math.min(measuredWidth, maxSceneWidth, maxSceneHeight * aspectRatio);
+  const sceneHeight = sceneWidth / aspectRatio;
+  const scale = Math.min(
+    sceneWidth / SANCTUARY_CANVAS.width,
+    sceneHeight / SANCTUARY_CANVAS.height
+  );
+  const offsetX = (sceneWidth - SANCTUARY_CANVAS.width * scale) / 2;
+  const offsetY = (sceneHeight - SANCTUARY_CANVAS.height * scale) / 2;
+  const smallScene = sceneWidth < 390;
+  const has = (element: string) => progress.unlockedElements.includes(element);
+  const treeImage = SANCTUARY_IMAGES.trees[Math.min(5, Math.max(0, progress.treeStage - 1))];
+  const flowerImage = SANCTUARY_IMAGES.flowers[Math.min(2, Math.max(0, progress.flowerStage - 1))];
+  const pondImage = SANCTUARY_IMAGES.ponds[Math.min(3, Math.max(0, progress.pondStage - 1))];
+  const birdImage = SANCTUARY_IMAGES.birds[Math.min(2, progress.totalCheckIns >= 140 ? 2 : progress.totalCheckIns >= 100 ? 1 : 0)];
+  const treeSway = useRef(new Animated.Value(0)).current;
+  const cloudDrift = useRef(new Animated.Value(0)).current;
+  const butterflyFloat = useRef(new Animated.Value(0)).current;
+  const birdHop = useRef(new Animated.Value(0)).current;
+  const lanternGlow = useRef(new Animated.Value(0)).current;
+  const pondRipple = useRef(new Animated.Value(0)).current;
+  const fireflyPulse = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const animations = [
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(treeSway, { toValue: 1, duration: 2400, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+          Animated.timing(treeSway, { toValue: 0, duration: 2400, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        ])
+      ),
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(cloudDrift, { toValue: 1, duration: 6200, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+          Animated.timing(cloudDrift, { toValue: 0, duration: 6200, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        ])
+      ),
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(butterflyFloat, { toValue: 1, duration: 1800, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+          Animated.timing(butterflyFloat, { toValue: 0, duration: 1800, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        ])
+      ),
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(birdHop, { toValue: 1, duration: 2100, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+          Animated.timing(birdHop, { toValue: 0, duration: 2100, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        ])
+      ),
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(lanternGlow, { toValue: 1, duration: 1500, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+          Animated.timing(lanternGlow, { toValue: 0, duration: 1500, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        ])
+      ),
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pondRipple, { toValue: 1, duration: 2600, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+          Animated.timing(pondRipple, { toValue: 0, duration: 2600, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        ])
+      ),
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(fireflyPulse, { toValue: 1, duration: 1200, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+          Animated.timing(fireflyPulse, { toValue: 0, duration: 1200, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        ])
+      ),
+    ];
+    animations.forEach((animation) => animation.start());
+    return () => animations.forEach((animation) => animation.stop());
+  }, [birdHop, butterflyFloat, cloudDrift, fireflyPulse, lanternGlow, pondRipple, treeSway]);
+
+  const animatedValues = {
+    birdHop,
+    butterflyFloat,
+    cloudDrift,
+    fireflyPulse,
+    lanternGlow,
+    pondRipple,
+    treeSway,
+  };
+
+  const layers = [
+    { key: "cloudLeft", source: SANCTUARY_IMAGES.clouds.night, visible: true },
+    { key: "cloudRight", source: SANCTUARY_IMAGES.clouds.partly, visible: true },
+    { key: "bird", source: birdImage, visible: has("birds") },
+    { key: "cabin", source: SANCTUARY_IMAGES.cabin, visible: progress.cabinStage > 0 },
+    { key: "tree", source: has("tree") ? treeImage : SANCTUARY_IMAGES.trees[0], visible: has("seed") || has("tree") },
+    { key: "bushesLeft", source: SANCTUARY_IMAGES.bush, visible: has("bushes") },
+    { key: "bushesRight", source: SANCTUARY_IMAGES.bush, visible: has("bushes") },
+    { key: "flowersLeft", source: flowerImage, visible: progress.flowerStage > 0 },
+    { key: "flowersRight", source: flowerImage, visible: progress.flowerStage > 1 },
+    { key: "pond", source: pondImage, visible: progress.pondStage > 0 },
+    { key: "bridge", source: SANCTUARY_IMAGES.bridge, visible: progress.pondStage > 2 },
+    { key: "rocksLeft", source: SANCTUARY_IMAGES.rocks, visible: has("rocks") },
+    { key: "rocksRight", source: SANCTUARY_IMAGES.rocks, visible: has("rocks") },
+    { key: "lantern", source: SANCTUARY_IMAGES.lantern, visible: has("lantern") },
+    { key: "butterfly", source: SANCTUARY_IMAGES.butterfly, visible: has("butterflies") },
+  ].filter((layer) => {
+    const layout = SANCTUARY_LAYOUT[layer.key];
+    return layer.visible && !(smallScene && layout.optional);
+  }).sort((a, b) => SANCTUARY_LAYOUT[a.key].z - SANCTUARY_LAYOUT[b.key].z);
+
+  const fireflyKeys = ["starsLeft", "starsMid", "fireflyA", "fireflyB", "fireflyC"].filter((key) =>
+    (key.startsWith("stars") || has("fireflies")) && !(smallScene && SANCTUARY_LAYOUT[key].optional)
+  );
+
+  return (
+    <View
+      style={styles.sanctuaryResponsiveWrap}
+      onLayout={(event: LayoutChangeEvent) => setAvailableWidth(event.nativeEvent.layout.width)}
+    >
+      <View
+        style={[
+          styles.sanctuaryScene,
+          {
+            width: sceneWidth,
+            height: sceneHeight,
+          },
+        ]}
+      >
+        <LinearGradient
+          colors={["#132134", "#0B111D", "#071018"]}
+          locations={[0, 0.48, 1]}
+          style={StyleSheet.absoluteFill}
+        />
+        <SanctuaryLandscape />
+        {fireflyKeys.map((key) => (
+          <SanctuarySpark
+            key={key}
+            layout={SANCTUARY_LAYOUT[key]}
+            pulse={fireflyPulse}
+            scale={scale}
+            offsetX={offsetX}
+            offsetY={offsetY}
+          />
+        ))}
+        {has("lantern") ? (
+          <SanctuaryGlow
+            layout={SANCTUARY_LAYOUT.lantern}
+            pulse={lanternGlow}
+            scale={scale}
+            offsetX={offsetX}
+            offsetY={offsetY}
+          />
+        ) : null}
+        {layers.map((layer) => (
+          <SanctuaryLayer
+            key={layer.key}
+            layoutKey={layer.key}
+            source={layer.source}
+            layout={SANCTUARY_LAYOUT[layer.key]}
+            animatedValues={animatedValues}
+            scale={scale}
+            offsetX={offsetX}
+            offsetY={offsetY}
+          />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function SanctuaryLayer({
+  layoutKey,
+  source,
+  layout,
+  animatedValues,
+  scale,
+  offsetX,
+  offsetY,
+}: {
+  layoutKey: string;
+  source: ImageSourcePropType;
+  layout: SanctuaryLayerLayout;
+  animatedValues: {
+    birdHop: Animated.Value;
+    butterflyFloat: Animated.Value;
+    cloudDrift: Animated.Value;
+    fireflyPulse: Animated.Value;
+    lanternGlow: Animated.Value;
+    pondRipple: Animated.Value;
+    treeSway: Animated.Value;
+  };
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+}) {
+  const width = layout.width * layout.scale * scale;
+  const baseTransforms: any[] = [];
+  const rotate = layout.rotate ?? 0;
+
+  if (layout.animation === "cloud") {
+    baseTransforms.push({
+      translateX: animatedValues.cloudDrift.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0, layoutKey === "cloudLeft" ? 10 : -15],
+      }),
+    });
+  }
+  if (layout.animation === "tree") {
+    baseTransforms.push({
+      rotate: animatedValues.treeSway.interpolate({
+        inputRange: [0, 1],
+        outputRange: ["-1deg", "1deg"],
+      }),
+    });
+  } else if (rotate) {
+    baseTransforms.push({ rotate: `${rotate}deg` });
+  }
+  if (layout.animation === "butterfly") {
+    baseTransforms.push(
+      {
+        translateY: animatedValues.butterflyFloat.interpolate({
+          inputRange: [0, 1],
+          outputRange: [0, -10],
+        }),
+      },
+      {
+        translateX: animatedValues.butterflyFloat.interpolate({
+          inputRange: [0, 1],
+          outputRange: [0, 8],
+        }),
+      }
+    );
+  }
+  if (layout.animation === "bird") {
+    baseTransforms.push({
+      translateY: animatedValues.birdHop.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0, -5],
+      }),
+    });
+  }
+  if (layout.animation === "pond") {
+    baseTransforms.push({
+      scale: animatedValues.pondRipple.interpolate({
+        inputRange: [0, 1],
+        outputRange: [1, 1.025],
+      }),
+    });
+  }
+  if (layout.animation === "lantern") {
+    baseTransforms.push({
+      scale: animatedValues.lanternGlow.interpolate({
+        inputRange: [0, 1],
+        outputRange: [1, 1.035],
+      }),
+    });
+  }
+
+  return (
+    <Animated.Image
+      source={source}
+      resizeMode="contain"
+      style={[
+        styles.sanctuaryLayer,
+        {
+          left: offsetX + layout.x * scale,
+          top: offsetY + layout.y * scale,
+          width,
+          aspectRatio: 1,
+          opacity: layout.opacity ?? 1,
+          zIndex: layout.z,
+          transform: [
+            { translateX: -width / 2 },
+            { translateY: layout.anchor === "bottom" ? -width : -width / 2 },
+            ...baseTransforms,
+          ],
+        },
+      ]}
+    />
+  );
+}
+
+function SanctuarySpark({
+  layout,
+  pulse,
+  scale,
+  offsetX,
+  offsetY,
+}: {
+  layout: SanctuaryLayerLayout;
+  pulse: Animated.Value;
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+}) {
+  const size = Math.max(3, layout.width * scale);
+  return (
+    <Animated.View
+      style={[
+        styles.fireflyDot,
+        {
+          left: offsetX + layout.x * scale,
+          top: offsetY + layout.y * scale,
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          zIndex: layout.z,
+          opacity: pulse.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0.22, 1],
+          }),
+          transform: [
+            {
+              scale: pulse.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0.75, 1.35],
+              }),
+            },
+          ],
+        },
+      ]}
+    />
+  );
+}
+
+function SanctuaryGlow({
+  layout,
+  pulse,
+  scale,
+  offsetX,
+  offsetY,
+}: {
+  layout: SanctuaryLayerLayout;
+  pulse: Animated.Value;
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+}) {
+  const size = 130 * scale;
+  return (
+    <Animated.View
+      style={[
+        styles.sanctuaryLanternGlow,
+        {
+          left: offsetX + layout.x * scale - size / 2,
+          top: offsetY + layout.y * scale - size / 2,
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          zIndex: layout.z - 1,
+          opacity: pulse.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0.2, 0.65],
+          }),
+          transform: [
+            {
+              scale: pulse.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0.82, 1.12],
+              }),
+            },
+          ],
+        },
+      ]}
+    />
+  );
+}
+
+function SanctuaryLandscape() {
+  return (
+    <Svg
+      width="100%"
+      height="100%"
+      viewBox="0 0 1000 700"
+      preserveAspectRatio="xMidYMid slice"
+      style={styles.sanctuaryLandscape}
+    >
+      <Defs>
+        <SvgLinearGradient id="hillBack" x1="0" y1="285" x2="1000" y2="570">
+          <Stop stopColor="#173C35" />
+          <Stop offset={1} stopColor="#10251E" />
+        </SvgLinearGradient>
+        <SvgLinearGradient id="grassMid" x1="0" y1="390" x2="1000" y2="650">
+          <Stop stopColor="#245F42" />
+          <Stop offset={0.58} stopColor="#1C4834" />
+          <Stop offset={1} stopColor="#0E1C18" />
+        </SvgLinearGradient>
+        <SvgLinearGradient id="grassFront" x1="0" y1="510" x2="1000" y2="700">
+          <Stop stopColor="#1F5338" />
+          <Stop offset={1} stopColor="#08110F" />
+        </SvgLinearGradient>
+      </Defs>
+      <Path
+        d="M-80 395C95 315 205 345 326 376C478 414 604 313 747 354C878 391 974 344 1080 316V700H-80Z"
+        fill="url(#hillBack)"
+        opacity={0.62}
+      />
+      <Path
+        d="M-80 474C92 405 208 420 352 448C505 479 618 395 762 421C886 444 972 424 1080 378V700H-80Z"
+        fill="url(#grassMid)"
+      />
+      <Path
+        d="M-80 580C76 527 188 542 314 565C464 592 598 513 744 535C884 556 984 535 1080 500V700H-80Z"
+        fill="url(#grassFront)"
+      />
+      <Path d="M0 520C190 492 365 505 500 518C663 535 830 518 1000 488" stroke="#5B8F58" strokeWidth={5} opacity={0.22} />
+      <Path d="M0 612C205 580 392 602 548 616C710 631 860 606 1000 574" stroke="#6FA45F" strokeWidth={4} opacity={0.18} />
+      {Array.from({ length: 18 }, (_, index) => {
+        const x = 45 + index * 56;
+        const y = index % 3 === 0 ? 628 : index % 3 === 1 ? 602 : 650;
+        return (
+          <Path
+            key={`grass-${index}`}
+            d={`M${x} ${y}c6-20 12-20 18 0M${x + 12} ${y}c9-24 18-24 26 0`}
+            stroke="#6FA45F"
+            strokeWidth={3}
+            strokeLinecap="round"
+            opacity={0.2}
+          />
+        );
+      })}
+    </Svg>
+  );
+}
+
+function CloudNative({ x, y, scale, opacity }: { x: number; y: number; scale: number; opacity: number }) {
+  return (
+    <G transform={`translate(${x} ${y}) scale(${scale})`} opacity={opacity}>
+      <Ellipse cx={0} cy={8} rx={18} ry={8} fill="#33415F" />
+      <Circle cx={-8} cy={4} r={8} fill="#33415F" />
+      <Circle cx={6} cy={2} r={10} fill="#33415F" />
+    </G>
+  );
+}
+
+function SeedNative() {
+  return (
+    <G stroke="#D8C4FF" strokeWidth={3} strokeLinecap="round" fill="none">
+      <Path d="M180 164v-18" />
+      <Path d="M180 152c-10-3-13-10-12-16 8 1 13 6 12 16Z" fill="#3F8F72" />
+      <Path d="M181 151c10-3 13-9 12-15-8 1-13 6-12 15Z" fill="#4FAE83" />
+    </G>
+  );
+}
+
+function TreeNative({ scale }: { scale: number }) {
+  return (
+    <G transform={`translate(180 138) scale(${scale})`}>
+      <Path d="M-8 52c5-24 5-50 0-73h18c-6 24-4 49 2 73Z" fill="#5B3F34" />
+      <Path d="M0 10c-8 14-18 25-35 34M4 7c10 12 22 22 38 29" stroke="#3B2D2B" strokeWidth={6} strokeLinecap="round" />
+      <Circle cx={-30} cy={-16} r={30} fill="#376F50" />
+      <Circle cx={0} cy={-36} r={36} fill="#4C8B61" />
+      <Circle cx={34} cy={-12} r={31} fill="#34694E" />
+      <Circle cx={-5} cy={-10} r={34} fill="#2F6D50" />
+      <Circle cx={20} cy={-40} r={24} fill="#5D9B6B" opacity={0.75} />
+    </G>
+  );
+}
+
+function FlowersNative({ count }: { count: number }) {
+  const flowers: [number, number, string][] = [
+    [96, 171, "#F39AC6"],
+    [117, 164, "#B79CFF"],
+    [136, 176, "#F5BD6D"],
+    [228, 170, "#F39AC6"],
+    [250, 166, "#B79CFF"],
+  ];
+  return (
+    <G>
+      {flowers.slice(0, count).map(([x, y, color], index) => (
+        <G key={`${x}-${index}`} transform={`translate(${x} ${y})`}>
+          <Path d="M0 12v-13" stroke="#5A8F62" strokeWidth={2} strokeLinecap="round" />
+          <Ellipse cx={-4} cy={-4} rx={4} ry={7} fill={color} />
+          <Ellipse cx={4} cy={-4} rx={4} ry={7} fill={color} />
+          <Ellipse cx={0} cy={-9} rx={4} ry={7} fill={color} />
+          <Circle cx={0} cy={-4} r={2} fill="#F8EFD9" />
+        </G>
+      ))}
+    </G>
+  );
+}
+
+function BushesNative() {
+  return (
+    <G fill="#326A4D">
+      <Circle cx={92} cy={174} r={12} />
+      <Circle cx={106} cy={168} r={16} />
+      <Circle cx={122} cy={176} r={12} />
+      <Circle cx={246} cy={174} r={13} />
+      <Circle cx={262} cy={168} r={15} />
+      <Circle cx={278} cy={176} r={12} />
+    </G>
+  );
+}
+
+function RocksNative() {
+  return (
+    <G fill="#7B8292" opacity={0.85}>
+      <Path d="M79 188c6-17 24-17 31 0Z" />
+      <Path d="M224 188c5-14 20-14 25 0Z" />
+      <Path d="M251 192c5-12 18-12 24 0Z" />
+    </G>
+  );
+}
+
+function PondNative({ stage }: { stage: number }) {
+  return (
+    <G>
+      <Ellipse cx={183} cy={188} rx={stage > 2 ? 58 : 42} ry={stage > 2 ? 20 : 15} fill="#1E6470" />
+      <Ellipse cx={183} cy={184} rx={stage > 2 ? 48 : 32} ry={stage > 2 ? 13 : 10} fill="#2B8793" opacity={0.45} />
+      <Ellipse cx={164} cy={184} rx={9} ry={4} fill="#7BB66A" />
+      {stage > 1 ? <Ellipse cx={203} cy={191} rx={11} ry={5} fill="#7BB66A" /> : null}
+      {stage > 3 ? <Path d="M222 176c9-13 17-12 24-4" stroke="#6FA45F" strokeWidth={3} strokeLinecap="round" /> : null}
+    </G>
+  );
+}
+
+function PathNative() {
+  return <Path d="M249 190c18 9 34 20 47 34" stroke="#89715A" strokeWidth={10} strokeLinecap="round" strokeDasharray="13 11" opacity={0.7} />;
+}
+
+function BenchNative() {
+  return (
+    <G transform="translate(247 154)" stroke="#A56B42" strokeWidth={4} strokeLinecap="round">
+      <Path d="M0 0h45M-2 11h49M7 11v17M39 11v17" />
+    </G>
+  );
+}
+
+function LanternNative() {
+  return (
+    <G transform="translate(294 150)">
+      <Path d="M10 0h18l4 32H6Z" fill="#4A3D35" stroke="#8A6B4A" strokeWidth={2} />
+      <Rect x={12} y={8} width={14} height={18} fill="#F5BD6D" opacity={0.8} />
+      <Path d="M13 0c1-9 12-9 14 0" stroke="#8A6B4A" strokeWidth={2} fill="none" />
+    </G>
+  );
+}
+
+function CabinNative({ stage }: { stage: number }) {
+  return (
+    <G transform="translate(260 118)">
+      <Path d="M0 28 28 4l28 24v45H0Z" fill={stage > 1 ? "#4B3835" : "#3A2F32"} stroke="#6F5A52" strokeWidth={2} />
+      <Path d="M-5 29 28 0l33 29" stroke="#73809A" strokeWidth={8} strokeLinecap="round" />
+      <Rect x={21} y={45} width={14} height={28} fill="#251D1E" />
+      <Rect x={39} y={35} width={11} height={12} fill="#F5BD6D" opacity={0.85} />
+    </G>
+  );
+}
+
+function BirdsNative() {
+  return (
+    <G stroke="#8EA2C3" strokeWidth={3} strokeLinecap="round" fill="none">
+      <Path d="M258 92c8-8 15-8 23 0" />
+      <Path d="M281 92c8-8 15-8 23 0" />
+    </G>
+  );
+}
+
+function ButterfliesNative() {
+  return (
+    <G fill="#B79CFF">
+      <Ellipse cx={86} cy={137} rx={6} ry={10} />
+      <Ellipse cx={98} cy={137} rx={6} ry={10} />
+      <Ellipse cx={260} cy={128} rx={5} ry={8} />
+      <Ellipse cx={270} cy={128} rx={5} ry={8} />
+    </G>
+  );
+}
+
+function FirefliesNative() {
+  return (
+    <G fill="#F5D56D" opacity={0.85}>
+      {[80, 132, 221, 284, 302].map((x, index) => (
+        <Circle key={x} cx={x} cy={70 + index * 17} r={2.2} />
+      ))}
+    </G>
+  );
+}
+
+type AdminSceneStatus = "draft" | "preview" | "live" | "archived";
+type AdminUnlockRequirementType =
+  | "complete_previous_scene"
+  | "total_checkins"
+  | "premium"
+  | "manual";
+
+interface AdminScene {
+  id: string;
+  name: string;
+  status: AdminSceneStatus;
+  requiredPreviousSceneId?: string;
+  unlockRequirementType: AdminUnlockRequirementType;
+  unlockRequirementValue: number;
+  maxCheckIns: number;
+  sortOrder: number;
+  previewImage: string;
+  backgroundAssetUrl: string;
+  groundAssetUrl: string;
+  unlockableObjects: string[];
+  publishedAt?: string;
+  updatedAt: string;
+}
+
+const ADMIN_SCENES: AdminScene[] = [
+  {
+    id: "forest-haven",
+    name: "Forest Haven",
+    status: "live",
+    unlockRequirementType: "manual",
+    unlockRequirementValue: 0,
+    maxCheckIns: 90,
+    sortOrder: 1,
+    previewImage: "sanctuary-preview",
+    backgroundAssetUrl: "sanctuary-background",
+    groundAssetUrl: "sanctuary-ground",
+    unlockableObjects: ["tree", "flowers", "pond", "bridge", "lantern", "cabin"],
+    publishedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    id: "twilight-grove",
+    name: "Twilight Grove",
+    status: "draft",
+    requiredPreviousSceneId: "forest-haven",
+    unlockRequirementType: "complete_previous_scene",
+    unlockRequirementValue: 90,
+    maxCheckIns: 120,
+    sortOrder: 2,
+    previewImage: "twilight-preview",
+    backgroundAssetUrl: "twilight-background",
+    groundAssetUrl: "twilight-ground",
+    unlockableObjects: ["moon", "tree", "fireflies", "pond", "cabin"],
+    updatedAt: new Date().toISOString(),
+  },
+];
+
+const ADMIN_PREVIEW_DEVICES = [
+  { label: "iPhone SE", width: 375, height: 667 },
+  { label: "iPhone 15", width: 393, height: 852 },
+  { label: "Pro Max", width: 430, height: 932 },
+  { label: "iPad", width: 768, height: 900 },
+  { label: "Desktop", width: 1024, height: 760 },
+];
+
+const ADMIN_PROGRESS = getSanctuaryProgress(87, {
+  calm: 0.7,
+  consistency: 0.8,
+  gratitude: 0.55,
+  stress: 0.25,
+  smallWins: 0.6,
+  nature: 0.7,
+});
+
+function validateAdminScene(scene: AdminScene) {
+  const errors: string[] = [];
+  if (!scene.name.trim()) errors.push("Scene needs a name.");
+  if (!scene.backgroundAssetUrl.trim() && !scene.groundAssetUrl.trim()) {
+    errors.push("Scene needs at least one ground or background asset.");
+  }
+  if (!scene.maxCheckIns || scene.maxCheckIns < 1) errors.push("Scene needs max check-ins.");
+  if (scene.unlockableObjects.length < 1) errors.push("Scene needs at least one unlockable object.");
+  if (!scene.previewImage.trim()) errors.push("Scene needs a preview image.");
+  if (scene.requiredPreviousSceneId === scene.id) errors.push("Previous scene cannot point to itself.");
+  return errors;
+}
+
+function MobileAdminDashboard() {
+  const screen = useWindowDimensions();
+  const [scenes, setScenes] = useState(ADMIN_SCENES);
+  const [selectedId, setSelectedId] = useState(ADMIN_SCENES[0].id);
+  const selectedScene = scenes.find((scene) => scene.id === selectedId) || scenes[0];
+  const [draft, setDraft] = useState<AdminScene>(selectedScene);
+  const [deviceIndex, setDeviceIndex] = useState(1);
+  const [errors, setErrors] = useState<string[]>([]);
+  const device = ADMIN_PREVIEW_DEVICES[deviceIndex];
+  const previewWidth = Math.min(device.width, Math.max(300, screen.width - 48));
+  const previewHeight = Math.min(device.height, screen.width < 620 ? 620 : 720);
+
+  useEffect(() => {
+    setDraft(selectedScene);
+    setErrors([]);
+  }, [selectedScene]);
+
+  function saveScene(next: AdminScene) {
+    const stamped = { ...next, updatedAt: new Date().toISOString() };
+    setScenes((current) =>
+      current.map((scene) => (scene.id === stamped.id ? stamped : scene))
+    );
+    setDraft(stamped);
+    setSelectedId(stamped.id);
+  }
+
+  function saveWithStatus(status: AdminSceneStatus) {
+    saveScene({
+      ...draft,
+      status,
+      publishedAt: status === "live" ? draft.publishedAt || new Date().toISOString() : draft.publishedAt,
+    });
+  }
+
+  function publishScene() {
+    const validationErrors = validateAdminScene(draft);
+    setErrors(validationErrors);
+    if (validationErrors.length > 0) return;
+
+    const publish = () => saveWithStatus("live");
+    if (Platform.OS === "web") {
+      publish();
+      return;
+    }
+
+    Alert.alert(
+      "Publish this sanctuary for all users?",
+      "This will make the scene visible in the app. Users will still need to unlock it based on its requirements.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Publish Live", onPress: publish },
+      ]
+    );
+  }
+
+  function duplicateScene() {
+    const copy: AdminScene = {
+      ...draft,
+      id: `${draft.id}-copy-${Date.now()}`,
+      name: `${draft.name} Copy`,
+      status: "draft",
+      publishedAt: undefined,
+      sortOrder: scenes.length + 1,
+      updatedAt: new Date().toISOString(),
+    };
+    setScenes((current) => [...current, copy]);
+    setSelectedId(copy.id);
+    setDraft(copy);
+  }
+
+  return (
+    <SafeAreaProvider style={styles.appRoot}>
+      <SafeAreaView style={styles.adminRoot}>
+        <StatusBar style="light" />
+        <ScrollView contentContainerStyle={styles.adminContent} showsVerticalScrollIndicator={false}>
+          <View style={styles.adminHeader}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.adminEyebrow}>Tranqly admin</Text>
+              <Text style={styles.adminTitle}>Sanctuary publishing</Text>
+              <Text style={styles.adminSubtitle}>
+                Draft, preview, publish, and test scenes across phone and browser sizes.
+              </Text>
+            </View>
+            {Platform.OS === "web" ? (
+              <Pressable
+                style={styles.adminBackButton}
+                onPress={() => {
+                  window.location.href = "/";
+                }}
+              >
+                <Text style={styles.adminBackText}>Back to app</Text>
+              </Pressable>
+            ) : null}
+          </View>
+
+          <View style={styles.adminSceneList}>
+            {scenes
+              .slice()
+              .sort((a, b) => a.sortOrder - b.sortOrder)
+              .map((scene) => (
+                <Pressable
+                  key={scene.id}
+                  onPress={() => setSelectedId(scene.id)}
+                  style={[
+                    styles.adminSceneChip,
+                    selectedId === scene.id && styles.adminSceneChipActive,
+                  ]}
+                >
+                  <Text style={styles.adminSceneChipTitle}>{scene.name}</Text>
+                  <Text style={styles.adminSceneChipStatus}>{scene.status}</Text>
+                </Pressable>
+              ))}
+          </View>
+
+          <View style={styles.adminGrid}>
+            <View style={styles.adminPanel}>
+              <Text style={styles.adminPanelTitle}>Scene config</Text>
+              <Text style={styles.adminLabel}>Name</Text>
+              <TextInput
+                value={draft.name}
+                onChangeText={(name) => setDraft((current) => ({ ...current, name }))}
+                placeholder="Scene name"
+                placeholderTextColor="#6F7890"
+                style={styles.adminInput}
+              />
+              <Text style={styles.adminLabel}>Max check-ins</Text>
+              <TextInput
+                value={String(draft.maxCheckIns)}
+                onChangeText={(value) =>
+                  setDraft((current) => ({ ...current, maxCheckIns: Number(value.replace(/[^0-9]/g, "")) || 0 }))
+                }
+                keyboardType="number-pad"
+                placeholder="90"
+                placeholderTextColor="#6F7890"
+                style={styles.adminInput}
+              />
+              <Text style={styles.adminLabel}>Unlock rule</Text>
+              <View style={styles.adminRuleRow}>
+                {(["manual", "complete_previous_scene", "total_checkins", "premium"] as AdminUnlockRequirementType[]).map((rule) => (
+                  <Pressable
+                    key={rule}
+                    onPress={() => setDraft((current) => ({ ...current, unlockRequirementType: rule }))}
+                    style={[
+                      styles.adminRuleChip,
+                      draft.unlockRequirementType === rule && styles.adminRuleChipActive,
+                    ]}
+                  >
+                    <Text style={styles.adminRuleChipText}>{rule.replace(/_/g, " ")}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <Text style={styles.adminLabel}>Unlockable objects</Text>
+              <TextInput
+                value={draft.unlockableObjects.join(", ")}
+                onChangeText={(value) =>
+                  setDraft((current) => ({
+                    ...current,
+                    unlockableObjects: value
+                      .split(",")
+                      .map((item) => item.trim())
+                      .filter(Boolean),
+                  }))
+                }
+                placeholder="tree, flowers, pond"
+                placeholderTextColor="#6F7890"
+                style={styles.adminInput}
+              />
+
+              {errors.length > 0 ? (
+                <View style={styles.adminErrors}>
+                  {errors.map((error) => (
+                    <Text key={error} style={styles.adminErrorText}>{error}</Text>
+                  ))}
+                </View>
+              ) : null}
+
+              <View style={styles.adminActions}>
+                <Pressable style={styles.adminActionButton} onPress={() => saveWithStatus("draft")}>
+                  <Text style={styles.adminActionText}>Save Draft</Text>
+                </Pressable>
+                <Pressable style={styles.adminActionButton} onPress={() => saveWithStatus("preview")}>
+                  <Text style={styles.adminActionText}>Preview Draft</Text>
+                </Pressable>
+                <Pressable style={[styles.adminActionButton, styles.adminActionPrimary]} onPress={publishScene}>
+                  <Text style={styles.adminActionPrimaryText}>Publish to Live</Text>
+                </Pressable>
+                <Pressable style={styles.adminActionButton} onPress={() => saveWithStatus("draft")}>
+                  <Text style={styles.adminActionText}>Unpublish</Text>
+                </Pressable>
+                <Pressable style={styles.adminActionButton} onPress={() => saveWithStatus("archived")}>
+                  <Text style={styles.adminActionText}>Archive</Text>
+                </Pressable>
+                <Pressable style={styles.adminActionButton} onPress={duplicateScene}>
+                  <Text style={styles.adminActionText}>Duplicate Scene</Text>
+                </Pressable>
+              </View>
+            </View>
+
+            <View style={styles.adminPanel}>
+              <Text style={styles.adminPanelTitle}>Responsive preview</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.adminDeviceRow}>
+                {ADMIN_PREVIEW_DEVICES.map((previewDevice, index) => (
+                  <Pressable
+                    key={previewDevice.label}
+                    onPress={() => setDeviceIndex(index)}
+                    style={[
+                      styles.adminDeviceChip,
+                      deviceIndex === index && styles.adminDeviceChipActive,
+                    ]}
+                  >
+                    <Text style={styles.adminDeviceText}>{previewDevice.label}</Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+              <View style={styles.adminPreviewWrap}>
+                <View style={[styles.adminPreviewFrame, { width: previewWidth, height: previewHeight }]}>
+                  <View style={styles.adminPreviewHeader}>
+                    <Text style={styles.adminPreviewTitle}>{draft.name}</Text>
+                    <Text style={styles.adminPreviewStatus}>{draft.status}</Text>
+                  </View>
+                  <ScrollView contentContainerStyle={styles.adminPreviewContent} showsVerticalScrollIndicator={false}>
+                    <Text style={styles.adminPreviewHeading}>Your sanctuary</Text>
+                    <Text style={styles.adminPreviewSubcopy}>Every entry helps it grow.</Text>
+                    <SanctuaryScene progress={ADMIN_PROGRESS} compact={device.width < 520} />
+                    <View style={styles.sanctuaryProgressBox}>
+                      <View style={styles.sanctuaryStatBlock}>
+                        <SproutStatIcon color="#7EE8D8" />
+                        <View>
+                          <Text style={styles.sanctuaryDays}>87</Text>
+                          <Text style={styles.sanctuaryProgressText}>Total check-ins</Text>
+                        </View>
+                      </View>
+                      <View style={styles.sanctuaryDivider} />
+                      <View style={styles.sanctuaryStatBlock}>
+                        <Text style={styles.sanctuaryStatIcon}>Streak</Text>
+                        <View>
+                          <Text style={styles.sanctuaryDays}>7</Text>
+                          <Text style={styles.sanctuaryProgressText}>Current streak</Text>
+                        </View>
+                      </View>
+                    </View>
+                  </ScrollView>
+                </View>
+              </View>
+            </View>
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    </SafeAreaProvider>
+  );
+}
+
+function SproutStatIcon({ color }: { color: string }) {
+  return (
+    <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
+      <Path d="M12 20v-7" stroke={color} strokeWidth={2.1} strokeLinecap="round" />
+      <Path d="M12 13c-4.4 0-6.8-2.6-6.8-7 4.2 0 6.8 2.2 6.8 7Z" stroke={color} strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round" />
+      <Path d="M12 13c4.4 0 6.8-2.6 6.8-7-4.2 0-6.8 2.2-6.8 7Z" stroke={color} strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round" />
+    </Svg>
+  );
+}
+
+function mobileAuthErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("EMAIL_NOT_FOUND") || message.includes("INVALID_LOGIN_CREDENTIALS")) {
+    return "That email or password did not match.";
+  }
+  if (message.includes("EMAIL_EXISTS")) return "That email is already connected to a Tranqly account.";
+  if (message.includes("INVALID_PASSWORD")) return "That email or password did not match.";
+  if (message.includes("WEAK_PASSWORD")) return "Your password needs 8 characters, one uppercase letter, one number, and one special character.";
+  if (message.includes("INVALID_EMAIL")) return "Please enter a valid email address.";
+  if (message.includes("NETWORK")) return "Tranqly could not connect right now. Please try again in a moment.";
+  return "Tranqly could not sign you in right now. Please try again in a moment.";
+}
+
+function notificationPermissionState(permission: unknown): "granted" | "denied" | "unknown" {
+  const data = permission as {
+    granted?: boolean;
+    status?: string;
+    ios?: { status?: number };
+  };
+  if (
+    data?.granted ||
+    data?.status === "granted" ||
+    data?.ios?.status === Notifications.IosAuthorizationStatus.PROVISIONAL
+  ) {
+    return "granted";
+  }
+  if (data?.status === "denied" || data?.ios?.status === Notifications.IosAuthorizationStatus.DENIED) {
+    return "denied";
+  }
+  return "unknown";
+}
+
+export default function App() {
+  const isAdminRoute =
+    Platform.OS === "web" &&
+    typeof window !== "undefined" &&
+    window.location.pathname.startsWith("/admin");
+
+  if (isAdminRoute) {
+    return <MobileAdminDashboard />;
+  }
+
+  const short = useWindowDimensions().width < 380;
+
+  const [tab, setTab] = useState<Tab>("coach");
+  const [text, setText] = useState("");
+  const [pending, setPending] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const [reflectionSource, setReflectionSource] = useState<"voice" | "typed">("typed");
+  const [showTranscriptPreview, setShowTranscriptPreview] = useState(false);
+  const [captured, setCaptured] = useState(false);
+  const [promptOffset, setPromptOffset] = useState(0);
+  const [voiceElapsed, setVoiceElapsed] = useState(0);
+  const [recording, setRecording] = useState<Audio.Recording | null>(null);
+  const [composerError, setComposerError] = useState("");
+  const [checkIns, setCheckIns] = useState<CheckIn[]>([]);
+  const [premium, setPremium] = useState(false);
+  const [coachUsage, setCoachUsage] = useState<{ dateKey: string; count: number }>({
+    dateKey: todayKey(),
+    count: 0,
+  });
+  const [moods, setMoods] = useState<Record<string, string>>({});
+  const [lastDeepInsight, setLastDeepInsight] = useState<DeepInsight | null>(null);
+  const [notificationSettings, setNotificationSettings] = useState<NotificationSettings>(DEFAULT_NOTIFICATION_SETTINGS);
+  const [sanctuaryUnlockNotifications, setSanctuaryUnlockNotifications] = useState<Record<string, string | null>>({});
+  const [authUser, setAuthUser] = useState<MobileAuthUser | null>(null);
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [showEmailAuth, setShowEmailAuth] = useState(false);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authNotice, setAuthNotice] = useState("");
+  const [coachModal, setCoachModal] = useState<{ text: string; reply: CoachReply } | null>(null);
+  const [showJourneyDeepInsight, setShowJourneyDeepInsight] = useState(false);
+  const [displayName, setDisplayName] = useState("");
+  const [onboardingName, setOnboardingName] = useState("");
+  const [onboardingStep, setOnboardingStep] = useState<"intro" | "name">("intro");
+  const [onboardingCompleted, setOnboardingCompleted] = useState(true);
+  const [onboardingCoachCompleted, setOnboardingCoachCompleted] = useState(false);
+  const [onboardingCoachStep, setOnboardingCoachStep] = useState<"mic" | "journey" | "sanctuary" | null>(null);
+  const [onboardingSkippedAt, setOnboardingSkippedAt] = useState<string | null>(null);
+  const [onboardingCoachCompletedAt, setOnboardingCoachCompletedAt] = useState<string | null>(null);
+  const [showPremiumModal, setShowPremiumModal] = useState(false);
+  const [showSanctuaryModal, setShowSanctuaryModal] = useState(false);
+  const [showAllReflections, setShowAllReflections] = useState(false);
+  const [checkoutBusy, setCheckoutBusy] = useState(false);
+  const [sanctuaryTheme, setSanctuaryTheme] = useState<SanctuaryThemeKey>("twilight");
+  const [draftSanctuaryTheme, setDraftSanctuaryTheme] = useState<SanctuaryThemeKey>("twilight");
+  const [showThemePreview, setShowThemePreview] = useState(false);
+  const [showThemePicker, setShowThemePicker] = useState(false);
+  const [sanctuaryDetailTheme, setSanctuaryDetailTheme] = useState<SanctuaryThemeKey>("twilight");
+  const [growthNotice, setGrowthNotice] = useState("");
+  const [showNotificationPrompt, setShowNotificationPrompt] = useState(false);
+  const [notificationsExpanded, setNotificationsExpanded] = useState(false);
+  const [notificationDraft, setNotificationDraft] = useState<NotificationSettings>(DEFAULT_NOTIFICATION_SETTINGS);
+  const passwordRules = passwordRuleItems(authPassword);
+  const passwordStrength = getPasswordStrength(authPassword);
+
+  useEffect(() => {
+    AsyncStorage.getItem(STORE_KEY).then((raw) => {
+      if (raw)
+        try {
+          const parsed: AppState = JSON.parse(raw);
+          setCheckIns((parsed.checkIns || []).filter((entry) => !entry.id.startsWith("demo-sanctuary-")));
+          setPremium(parsed.premium ?? false);
+          setCoachUsage(parsed.coachUsage || { dateKey: todayKey(), count: 0 });
+          setMoods(parsed.moods || {});
+          setLastDeepInsight(parsed.lastDeepInsight || null);
+          setNotificationSettings({ ...DEFAULT_NOTIFICATION_SETTINGS, ...(parsed.notificationSettings || {}) });
+          setSanctuaryUnlockNotifications(parsed.sanctuaryUnlockNotifications || {});
+          setAuthUser(parsed.authUser || null);
+          setAuthEmail(parsed.authUser?.email || "");
+          setDisplayName(parsed.displayName || "");
+          setOnboardingName(parsed.displayName || "");
+          setOnboardingCompleted(parsed.onboardingCompleted ?? true);
+          setOnboardingCoachCompleted(parsed.onboardingCoachCompleted ?? false);
+          setOnboardingCoachStep(parsed.onboardingCoachStep ?? null);
+          setOnboardingSkippedAt(parsed.onboardingSkippedAt ?? null);
+          setOnboardingCoachCompletedAt(parsed.onboardingCompletedAt ?? null);
+          setSanctuaryTheme(parsed.sanctuaryTheme || "twilight");
+          setDraftSanctuaryTheme(parsed.sanctuaryTheme || "twilight");
+        } catch {}
+    });
+  }, []);
+
+  useEffect(() => {
+    setNotificationDraft(notificationSettings);
+  }, [notificationSettings]);
+
+  useEffect(() => {
+    const state: AppState = {
+      checkIns,
+      premium,
+      coachUsage,
+      moods,
+      lastDeepInsight,
+      notificationSettings,
+      sanctuaryUnlockNotifications,
+      authUser,
+      displayName,
+      sanctuaryTheme,
+      onboardingCompleted,
+      onboardingCoachCompleted,
+      onboardingCoachStep,
+      onboardingSkippedAt,
+      onboardingCompletedAt: onboardingCoachCompletedAt,
+    };
+    AsyncStorage.setItem(STORE_KEY, JSON.stringify(state));
+  }, [
+    checkIns,
+    premium,
+    coachUsage,
+    moods,
+    lastDeepInsight,
+    notificationSettings,
+    sanctuaryUnlockNotifications,
+    authUser,
+    displayName,
+    sanctuaryTheme,
+    onboardingCompleted,
+    onboardingCoachCompleted,
+    onboardingCoachStep,
+    onboardingSkippedAt,
+    onboardingCoachCompletedAt,
+  ]);
+
+  const todayMood = moods[todayKey()] || null;
+
+  async function submitMobileAuth(mode: "signIn" | "signUp") {
+    const email = authEmail.trim();
+    if (!FIREBASE_API_KEY) {
+      Alert.alert(
+        "Firebase not configured",
+        "Set EXPO_PUBLIC_FIREBASE_API_KEY in apps/mobile/.env, then restart Expo."
+      );
+      return;
+    }
+    if (!/^\S+@\S+\.\S+$/.test(email)) {
+      setAuthNotice("Please enter a valid email address.");
+      return;
+    }
+    if (mode === "signUp" && !isPasswordValid(authPassword)) {
+      setAuthNotice("Your password needs 8 characters, one uppercase letter, one number, and one special character.");
+      return;
+    }
+    if (mode === "signIn" && !authPassword) {
+      setAuthNotice("Please enter your password.");
+      return;
+    }
+
+    setAuthBusy(true);
+    setAuthNotice("");
+    const endpoint = mode === "signUp" ? "signUp" : "signInWithPassword";
+    try {
+      const response = await fetch(
+        `https://identitytoolkit.googleapis.com/v1/accounts:${endpoint}?key=${FIREBASE_API_KEY}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password: authPassword, returnSecureToken: true }),
+        }
+      );
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.error?.message || "AUTH_FAILED");
+      setAuthUser({
+        email: data.email || email,
+        localId: data.localId,
+        idToken: data.idToken,
+        refreshToken: data.refreshToken,
+        expiresAt: Date.now() + Number(data.expiresIn || 3600) * 1000,
+      });
+      setAuthPassword("");
+      setShowEmailAuth(false);
+      setAuthNotice(mode === "signUp" ? "Account created. This device is linked to your Tranqly account." : "Signed in. This device is linked to your Tranqly account.");
+    } catch (error) {
+      setAuthNotice(mobileAuthErrorMessage(error));
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function sendMobilePasswordReset() {
+    const email = authEmail.trim();
+    if (!FIREBASE_API_KEY) {
+      setAuthNotice("Firebase is not configured for this build.");
+      return;
+    }
+    if (!/^\S+@\S+\.\S+$/.test(email)) {
+      setAuthNotice("Please enter a valid email address.");
+      return;
+    }
+    setAuthBusy(true);
+    setAuthNotice("");
+    try {
+      const response = await fetch(
+        `https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${FIREBASE_API_KEY}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ requestType: "PASSWORD_RESET", email }),
+        }
+      );
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.error?.message || "RESET_FAILED");
+      setAuthNotice("Password reset email sent.");
+    } catch (error) {
+      setAuthNotice(mobileAuthErrorMessage(error));
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  function signOutMobile() {
+    setAuthUser(null);
+    setAuthPassword("");
+    setAuthNotice("Signed out on this device.");
+  }
+
+  function setTodayMood(m: string) {
+    setMoods((prev) => ({ ...prev, [todayKey()]: m }));
+  }
+
+  function updateMobileNotificationSettings(
+    patch:
+      | Partial<NotificationSettings>
+      | ((current: NotificationSettings) => NotificationSettings)
+  ) {
+    setNotificationSettings((current) => {
+      const next = typeof patch === "function" ? patch(current) : { ...current, ...patch };
+      return { ...DEFAULT_NOTIFICATION_SETTINGS, ...next };
+    });
+  }
+
+  async function saveMobileNotificationSettings() {
+    let nextDraft = { ...DEFAULT_NOTIFICATION_SETTINGS, ...notificationDraft };
+    if (nextDraft.dailyReminderEnabled && nextDraft.permissionStatus !== "granted") {
+      const permission = await requestNotificationPermission();
+      nextDraft = {
+        ...nextDraft,
+        permissionStatus: permission === "granted" ? "granted" : "denied",
+        dailyReminderEnabled: permission === "granted" ? nextDraft.dailyReminderEnabled : false,
+      };
+    }
+    updateMobileNotificationSettings(nextDraft);
+    setNotificationsExpanded(false);
+  }
+
+  async function requestNotificationPermission() {
+    const existing = await Notifications.getPermissionsAsync();
+    if (notificationPermissionState(existing) === "granted") {
+      updateMobileNotificationSettings({ permissionStatus: "granted", notificationPromptShown: true });
+      return "granted" as const;
+    }
+    const next = await Notifications.requestPermissionsAsync();
+    const granted = notificationPermissionState(next) === "granted";
+    updateMobileNotificationSettings({
+      permissionStatus: granted ? "granted" : "denied",
+      notificationPromptShown: true,
+    });
+    return granted ? ("granted" as const) : ("denied" as const);
+  }
+
+  async function scheduleReminderNotifications(settings = notificationSettings) {
+    if (Platform.OS === "web") return;
+    await Notifications.cancelAllScheduledNotificationsAsync();
+    if (settings.pauseReminders || settings.permissionStatus !== "granted") return;
+
+    if (settings.dailyReminderEnabled) {
+      const cadenceDays = dailyReminderCadenceDays(settings);
+      const nextTime = adjustedTimeForQuietHours(settings.dailyReminderTime, settings);
+      const { hours, minutes } = (() => {
+        const [h = "19", m = "30"] = nextTime.split(":");
+        return { hours: Number(h), minutes: Number(m) };
+      })();
+      if (cadenceDays === 1) {
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: "Your sanctuary is waiting.",
+            body: "Take one quiet minute for yourself today.",
+            data: { route: "coach", kind: "daily_reflection" },
+          },
+          trigger: {
+            type: Notifications.SchedulableTriggerInputTypes.CALENDAR,
+            hour: hours,
+            minute: minutes,
+            repeats: true,
+          },
+        });
+      } else {
+        const first = new Date();
+        first.setHours(hours, minutes, 0, 0);
+        if (first <= new Date()) first.setDate(first.getDate() + cadenceDays);
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: "Your next reflection is ready when you are.",
+            body: "What’s one thing you want to remember about today?",
+            data: { route: "coach", kind: "daily_reflection" },
+          },
+          trigger: {
+            type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+            seconds: Math.max(60, Math.floor((first.getTime() - Date.now()) / 1000)),
+            repeats: false,
+          },
+        });
+      }
+    }
+
+    if (settings.weeklyInsightEnabled) {
+      const nextTime = adjustedTimeForQuietHours(settings.weeklyInsightTime, settings);
+      const [hours = "19", minutes = "00"] = nextTime.split(":");
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: "Your weekly reflection is ready.",
+          body: "See what Tranqly noticed this week.",
+          data: { route: "journey", kind: "weekly_insight" },
+        },
+        trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.CALENDAR,
+          weekday: 1,
+          hour: Number(hours),
+          minute: Number(minutes),
+          repeats: true,
+        },
+      });
+    }
+  }
+
+  const { height: screenHeight } = useWindowDimensions();
+  const shortLayout = screenHeight < 700;
+  const micPulse = useRef(new Animated.Value(1)).current;
+  const recordingStoppingRef = useRef(false);
+  const promptSelection = selectMobilePrompt(checkIns, sanctuaryTheme, moods[todayKey()] || null, promptOffset);
+  const dailyPrompt = promptSelection.prompt;
+
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+    Notifications.getPermissionsAsync().then((permission) => {
+      const status = notificationPermissionState(permission);
+      setNotificationSettings((current) => ({
+        ...current,
+        permissionStatus: status === "unknown" ? current.permissionStatus : status,
+      }));
+    });
+    const responseSub = Notifications.addNotificationResponseReceivedListener((response) => {
+      const route = String(response.notification.request.content.data?.route || "");
+      updateMobileNotificationSettings({ lastReminderOpenedAt: new Date().toISOString() });
+      if (route === "coach") {
+        setTab("coach");
+      } else if (route === "journey") {
+        setTab("journey");
+      } else if (route === "sanctuary") {
+        setTab("you");
+        setShowThemePicker(true);
+      }
+    });
+    return () => responseSub.remove();
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+    void scheduleReminderNotifications(notificationSettings);
+  }, [notificationSettings]);
+
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(micPulse, {
+          toValue: 1.12,
+          duration: 900,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(micPulse, {
+          toValue: 1,
+          duration: 900,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [micPulse]);
+
+  useEffect(() => {
+    if (!recording) {
+      setVoiceElapsed(0);
+      return;
+    }
+
+    setVoiceElapsed(0);
+    const startedAt = Date.now();
+    const interval = setInterval(() => {
+      const elapsed = Math.min(
+        VOICE_LIMIT_SECONDS,
+        Math.floor((Date.now() - startedAt) / 1000)
+      );
+      setVoiceElapsed(elapsed);
+      if (elapsed >= VOICE_LIMIT_SECONDS) {
+        void stopRecording(recording);
+      }
+    }, 250);
+
+    return () => clearInterval(interval);
+  }, [recording]);
+
+  async function submit() {
+    const trimmed = text.trim();
+    if (!trimmed || pending) return;
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setComposerError("");
+    if (!API_BASE_URL) {
+      Alert.alert(
+        "Server not configured",
+        "Set EXPO_PUBLIC_API_BASE_URL to your Tranqly web server URL, then restart Expo."
+      );
+      return;
+    }
+    Keyboard.dismiss();
+
+    const entry: CheckIn = {
+      id: Date.now().toString(),
+      text: trimmed,
+      createdAt: new Date().toISOString(),
+      dateKey: todayKey(),
+      source: reflectionSource,
+      prompt: dailyPrompt,
+      promptType: promptSelection.promptType,
+      promptWhy: promptSelection.whyThisQuestion,
+    };
+
+    const notice = growthNoticeFor(checkIns.length, checkIns.length + 1);
+    if (notice) {
+      setGrowthNotice(`Your sanctuary has grown. ${notice}`);
+      setTimeout(() => setGrowthNotice(""), 4500);
+    }
+    setCheckIns((prev) => [entry, ...prev]);
+    updateMobileNotificationSettings((current) => updateReflectionTiming(current, entry.createdAt, checkIns));
+    if (
+      checkIns.length === 0 &&
+      notificationSettings.permissionStatus === "unknown" &&
+      !notificationSettings.notificationPromptShown
+    ) {
+      setShowNotificationPrompt(true);
+    }
+    const unlockedTheme = sanctuaryThemesByUnlock().find(
+      (theme) =>
+        theme.unlockType === "reflections" &&
+        checkIns.length < theme.unlockDays &&
+        checkIns.length + 1 >= theme.unlockDays
+    );
+    if (
+      unlockedTheme &&
+      notificationSettings.sanctuaryUnlockEnabled &&
+      notificationSettings.permissionStatus === "granted" &&
+      !sanctuaryUnlockNotifications[unlockedTheme.key]
+    ) {
+      setTimeout(() => {
+        void Notifications.scheduleNotificationAsync({
+          content: {
+            title: `${unlockedTheme.label} is ready.`,
+            body: "Explore your new sanctuary.",
+            data: { route: "sanctuary", kind: "sanctuary_unlock", themeId: unlockedTheme.key },
+          },
+          trigger: null,
+        });
+      }, 600);
+      setSanctuaryUnlockNotifications((current) => ({
+        ...current,
+        [unlockedTheme.key]: new Date().toISOString(),
+      }));
+    }
+    setText("");
+    setShowTranscriptPreview(false);
+    setReflectionSource("typed");
+
+    const todayUsage = coachUsage.dateKey === todayKey() ? coachUsage : { dateKey: todayKey(), count: 0 };
+    if (!premium && todayUsage.count >= FREE_AI_INSIGHTS_PER_DAY) {
+      Alert.alert(
+        "Reflection saved",
+        "You've reached your free insight limit for today. Upgrade to Tranqly Plus for unlimited insights."
+      );
+      setShowPremiumModal(true);
+      return;
+    }
+
+    setCoachUsage(
+      todayUsage.dateKey === todayKey()
+        ? { ...todayUsage, count: todayUsage.count + 1 }
+        : { dateKey: todayKey(), count: 1 }
+    );
+    setPending(true);
+
+    try {
+      const coachStartedAt = Date.now();
+      const mobileMemorySummary = [
+        topThemeSummary(checkIns),
+        topStruggleSummary(checkIns),
+        `You reflect most often in the ${reflectionTimeSummary(checkIns)}.`,
+      ].filter(Boolean);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), COACH_TIMEOUT_MS);
+      console.info("Posting coach request to", `${API_BASE_URL}/api/coach`);
+      const res = await fetch(`${API_BASE_URL}/api/coach`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          entry: trimmed,
+          text: trimmed,
+          name: displayName.trim() || undefined,
+          mood: todayMood,
+          streak,
+          prompt: dailyPrompt,
+          promptType: promptSelection.promptType,
+          promptWhy: promptSelection.whyThisQuestion,
+          memoryProfileSummary: mobileMemorySummary,
+          recentPromptHistory: checkIns
+            .slice(0, 10)
+            .map((c) => ({ prompt: c.prompt, promptType: c.promptType, promptWhy: c.promptWhy }))
+            .filter((item) => item.prompt),
+          currentSanctuary: sanctuaryTheme,
+          userPlan: premium ? "plus" : "free",
+          history: checkIns,
+          recentEntries: checkIns.slice(0, 10).map((c) => ({
+            text: c.text,
+            dateKey: c.dateKey,
+          })),
+        }),
+      });
+      clearTimeout(timeout);
+      console.info("Coach response status", res.status);
+      if (res.ok) {
+        const data = await res.json();
+        console.info("Coach response payload", {
+          requestId: data.requestId,
+          fallback: data.fallback,
+          blocked: data.blocked,
+          source: data.source,
+          error: data.error,
+          title: data.title,
+        });
+        if (data.fallback) {
+          logMobileApiError({
+            requestId: typeof data.requestId === "string" ? data.requestId : undefined,
+            errorCode: "mobile_coach_fallback",
+            errorMessage: "Server returned fallback signal for coach insight.",
+            featureArea: "coach",
+            statusCode: res.status,
+            durationMs: Date.now() - coachStartedAt,
+            route: "/api/coach",
+          });
+        }
+        entry.reply = data.fallback
+          ? localCoachReply(trimmed)
+          : {
+              message: data.message || "",
+              nextStep: data.nextStep || "",
+              title: data.title,
+              pattern: data.pattern,
+              summary: data.summary,
+              themes: data.themes,
+              tags: data.tags,
+              emotionalTone: data.emotionalTone,
+              followUpQuestions: data.followUpQuestions,
+              source: "ai",
+              createdAt: new Date().toISOString(),
+            };
+      } else {
+        console.warn("Coach request returned non-ok status", res.status);
+        logMobileApiError({
+          errorCode: "mobile_coach_non_ok",
+          errorMessage: `Coach request returned status ${res.status}.`,
+          featureArea: "coach",
+          statusCode: res.status,
+          durationMs: Date.now() - coachStartedAt,
+          route: "/api/coach",
+        });
+        entry.reply = localCoachReply(trimmed);
+      }
+    } catch (err) {
+      console.warn("Coach request failed", err);
+      logMobileApiError({
+        errorCode: "mobile_coach_request_failed",
+        errorMessage: err instanceof Error ? err.message : "Coach request failed.",
+        featureArea: "coach",
+        durationMs: undefined,
+        route: "/api/coach",
+      });
+      setComposerError("Insight took too long. Your reflection was saved, try again in a moment.");
+      setTimeout(() => setComposerError(""), 5000);
+      entry.reply = localCoachReply(trimmed);
+    }
+
+    if (entry.reply) {
+      setCoachModal({ text: entry.text, reply: entry.reply });
+    }
+
+    const di: DeepInsight = localDeepInsight(trimmed);
+    setLastDeepInsight(di);
+
+    setCheckIns((prev) => prev.map((c) => c.id === entry.id ? entry : c));
+    setPending(false);
+  }
+
+  const grouped = useMemo(() => {
+    const map = new Map<string, CheckIn[]>();
+    for (const c of checkIns) {
+      if (!map.has(c.dateKey)) map.set(c.dateKey, []);
+      map.get(c.dateKey)!.push(c);
+    }
+    const sorted = Array.from(map.entries()).sort(([a], [b]) => b.localeCompare(a));
+    return sorted.map(([dateKey, entries]) => ({ dateKey, entries }));
+  }, [checkIns]);
+  const recentJourneyGroups = useMemo(() => {
+    if (showAllReflections) return grouped;
+    let remaining = 5;
+    const groups: { dateKey: string; entries: CheckIn[] }[] = [];
+    for (const group of grouped) {
+      if (remaining <= 0) break;
+      const entries = group.entries.slice(0, remaining);
+      if (entries.length) {
+        groups.push({ dateKey: group.dateKey, entries });
+        remaining -= entries.length;
+      }
+    }
+    return groups;
+  }, [grouped, showAllReflections]);
+
+  const today = todayKey();
+  const weekCheckInCount = useMemo(() => {
+    const now = new Date();
+    const start = new Date(now);
+    start.setDate(now.getDate() - now.getDay());
+    const startKey = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}-${String(start.getDate()).padStart(2, "0")}`;
+    return new Set(
+      checkIns
+        .filter((c) => c.dateKey >= startKey && c.dateKey <= todayKey())
+        .map((c) => c.dateKey)
+    ).size;
+  }, [checkIns]);
+  const monthStats = useMemo(() => {
+    const now = new Date();
+    const monthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    const monthEntries = checkIns.filter((c) => c.dateKey.startsWith(monthPrefix));
+    const uniqueDays = new Set(monthEntries.map((c) => c.dateKey)).size;
+    const allText = monthEntries.map((c) => c.text).join(" ").toLowerCase();
+    const calmHits = (allText.match(/calm|peace|slow|quiet|rest|outside|walk/g) ?? []).length;
+    const gratitudeHits = (allText.match(/grateful|thankful|appreciate|good|happy|love/g) ?? []).length;
+    const stressHits = (allText.match(/stress|busy|overwhelm|tired|anxious|hard/g) ?? []).length;
+
+    return {
+      calm: calmHits >= stressHits ? "Up" : "Building",
+      consistency: `${uniqueDays} days`,
+      gratitude: gratitudeHits > 2 ? "High" : gratitudeHits > 0 ? "Growing" : "Starting",
+      stress: stressHits > calmHits ? "Worth watching" : "Lower than last week",
+    };
+  }, [checkIns]);
+  const journeyMemory = useMemo(() => buildMobileJourney(checkIns), [checkIns]);
+
+  function formatDate(dateKey: string) {
+    const [y, m, d] = dateKey.split("-").map(Number);
+    const date = new Date(y, m - 1, d);
+    return date.toLocaleDateString("en-US", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
+  }
+
+  function formatTime(iso: string) {
+    const d = new Date(iso);
+    return d.toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  }
+
+  function openCoachModal(entryText: string, reply: CoachReply) {
+    setCoachModal({ text: entryText, reply });
+  }
+
+  function deleteCheckIn(id: string) {
+    setCheckIns((prev) => prev.filter((c) => c.id !== id));
+  }
+
+  function openPremium() {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setShowPremiumModal(true);
+  }
+
+  function finishCoachMarks(skipped: boolean) {
+    const now = new Date().toISOString();
+    setOnboardingCoachCompleted(true);
+    setOnboardingCoachStep(null);
+    setOnboardingCoachCompletedAt(now);
+    if (skipped) setOnboardingSkippedAt(now);
+    if (!skipped) setTab("coach");
+  }
+
+  function nextCoachMark() {
+    if (onboardingCoachStep === "mic") {
+      setOnboardingCoachStep("journey");
+      setTab("journey");
+      return;
+    }
+    if (onboardingCoachStep === "journey") {
+      setOnboardingCoachStep("sanctuary");
+      setTab("you");
+      return;
+    }
+    finishCoachMarks(false);
+  }
+
+  useEffect(() => {
+    if (!onboardingCompleted || onboardingCoachCompleted || !onboardingCoachStep) return;
+    if (onboardingCoachStep === "mic" && tab !== "coach") setTab("coach");
+    if (onboardingCoachStep === "journey" && tab !== "journey") setTab("journey");
+    if (onboardingCoachStep === "sanctuary" && tab !== "you") setTab("you");
+  }, [onboardingCoachCompleted, onboardingCoachStep, onboardingCompleted, tab]);
+
+  async function startCheckout() {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    if (!API_BASE_URL) {
+      Alert.alert(
+        "Checkout unavailable",
+        "Set EXPO_PUBLIC_API_BASE_URL to your Tranqly web server URL, then restart Expo."
+      );
+      return;
+    }
+    setCheckoutBusy(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/checkout`, { method: "POST" });
+      const data = await res.json();
+      if (data.url) {
+        await Linking.openURL(data.url);
+        return;
+      }
+      if (data.demo) {
+        setPremium(true);
+        setShowPremiumModal(false);
+        return;
+      }
+      Alert.alert("Checkout unavailable", "Checkout could not start. Please try again.");
+    } catch {
+      Alert.alert("Checkout unavailable", "Checkout could not start. Please try again.");
+    } finally {
+      setCheckoutBusy(false);
+    }
+  }
+
+  function CoachFace({ size = 44 }: { size?: number }) {
+    return (
+      <View
+        style={{
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          backgroundColor: "#1E2938",
+          alignItems: "center",
+          justifyContent: "center",
+          borderWidth: 2,
+          borderColor: "#263142",
+        }}
+      >
+        <Text style={{ fontSize: size * 0.45 }}>*</Text>
+      </View>
+    );
+  }
+
+  const streak = currentStreak(checkIns);
+  const best = bestStreak(checkIns);
+  const latestToday = checkIns.find((c) => c.dateKey === todayKey() && c.reply);
+  const showSubmittedCoach = Boolean(latestToday?.reply && !pending);
+  const greeting = greetingForNow();
+  const firstName = displayName.trim().split(/\s+/)[0];
+  const selectedSanctuary = getSanctuaryTheme(sanctuaryTheme);
+  const detailSanctuary = getSanctuaryTheme(sanctuaryDetailTheme);
+  const upcomingSanctuary = nextThemeUnlock(checkIns.length, premium);
+  const reflectionsToNextSanctuary = upcomingSanctuary
+    ? Math.max(0, upcomingSanctuary.unlockDays - checkIns.length)
+    : 0;
+  const detailSanctuaryReflectionCount = detailSanctuary.unlockType === "reflections"
+    ? Math.max(0, checkIns.length - detailSanctuary.unlockDays)
+    : checkIns.length;
+  const appTheme = APP_THEME_PALETTES[sanctuaryTheme] || APP_THEME_PALETTES.twilight;
+  const reminderSuggestion = adaptiveSuggestion(notificationSettings);
+  const voiceProgress = Math.min(1, voiceElapsed / VOICE_LIMIT_SECONDS);
+  const composerStatus = composerError
+    ? composerError
+    : recording
+      ? `Listening... ${voiceElapsed}s / ${VOICE_LIMIT_SECONDS}s`
+      : transcribing
+        ? "Transcribing your voice..."
+        : pending
+          ? "Building your insight..."
+          : captured
+            ? "Reflection captured."
+            : text.trim()
+              ? "Ready for insights."
+              : "Ready when you are.";
+  const voiceProgressBar = (
+    <View style={styles.voiceLimitWrap}>
+      <View style={[styles.voiceLimitTrack, { backgroundColor: appTheme.ink }]}>
+        <View
+          style={[
+            styles.voiceLimitFill,
+            {
+              backgroundColor: appTheme.accent,
+              width: `${voiceProgress * 100}%`,
+            },
+          ]}
+        />
+      </View>
+      <Text style={[styles.voiceLimitText, { color: appTheme.faint }]}>
+        {voiceElapsed}s / {VOICE_LIMIT_SECONDS}s
+      </Text>
+    </View>
+  );
+  const themedCard = { backgroundColor: appTheme.card, borderColor: appTheme.edge };
+  const themedInk = { backgroundColor: appTheme.ink, borderColor: appTheme.edge };
+  const themedWeekly = { backgroundColor: appTheme.weeklyBg, borderColor: appTheme.edge };
+  const themedTitle = { color: appTheme.fg };
+  const themedBody = { color: appTheme.dim };
+  const themedMuted = { color: appTheme.faint };
+  const themedAccent = { color: appTheme.accent };
+  const themedAccent2 = { color: appTheme.accent2 };
+
+  return (
+    <SafeAreaProvider style={[styles.appRoot, { backgroundColor: appTheme.bg }]}>
+      <SafeAreaView style={[styles.shell, { backgroundColor: appTheme.bg }]}>
+        <StatusBar style="light" />
+        <Modal
+          visible={!onboardingCompleted}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setOnboardingCompleted(true)}
+        >
+          <Pressable style={styles.onboardingOverlay} onPress={Keyboard.dismiss}>
+            <Pressable style={[styles.onboardingCard, themedCard]} onPress={Keyboard.dismiss}>
+              <View style={[styles.onboardingLotus, { borderColor: appTheme.accent, backgroundColor: appTheme.helperBg }]}>
+                <ThemeIcon type="blossom" color={appTheme.accent} size={44} />
+              </View>
+              {onboardingStep === "intro" ? (
+                <>
+                  <Text style={[styles.onboardingTitle, themedTitle]}>Welcome to Tranqly.</Text>
+                  <Text style={[styles.onboardingBody, themedBody]}>
+                    This is your quiet place to reflect for a minute each day. No pressure. No judgment. Just one honest moment at a time.
+                  </Text>
+                  <Pressable
+                    onPress={() => {
+                      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      setOnboardingStep("name");
+                    }}
+                    style={[styles.onboardingButton, { backgroundColor: appTheme.button }]}
+                  >
+                    <Text style={[styles.onboardingButtonText, themedTitle]}>Continue</Text>
+                  </Pressable>
+                </>
+              ) : (
+                <>
+                  <Text style={[styles.onboardingTitle, themedTitle]}>Make it yours.</Text>
+                  <Text style={[styles.onboardingBody, themedBody]}>
+                    Add a first name if you want Tranqly to greet you personally.
+                  </Text>
+                  <Text style={[styles.youInputLabel, themedTitle]}>What should I call you? (optional)</Text>
+                  <TextInput
+                    value={onboardingName}
+                    onChangeText={setOnboardingName}
+                    placeholder="Your name"
+                    placeholderTextColor={appTheme.faint}
+                    blurOnSubmit
+                    returnKeyType="done"
+                    onSubmitEditing={Keyboard.dismiss}
+                    style={[styles.youInput, themedInk, themedTitle]}
+                  />
+                  <Pressable
+                    onPress={() => {
+                      Keyboard.dismiss();
+                      const clean = onboardingName.trim();
+                      setDisplayName(clean);
+                      setOnboardingCompleted(true);
+                      setOnboardingCoachCompleted(false);
+                      setOnboardingCoachStep("mic");
+                      setOnboardingSkippedAt(null);
+                      setOnboardingCoachCompletedAt(null);
+                    }}
+                    style={[styles.onboardingButton, { backgroundColor: appTheme.button }]}
+                  >
+                    <Text style={[styles.onboardingButtonText, themedTitle]}>Enter Your Sanctuary</Text>
+                  </Pressable>
+                </>
+              )}
+            </Pressable>
+          </Pressable>
+        </Modal>
+        <Modal
+          visible={Boolean(onboardingCompleted && !onboardingCoachCompleted && onboardingCoachStep)}
+          transparent
+          animationType="fade"
+          onRequestClose={() => finishCoachMarks(true)}
+        >
+          <View style={styles.coachMarkOverlay}>
+            <View style={[styles.coachMarkCard, { backgroundColor: appTheme.card, borderColor: appTheme.accent }]}>
+              <View style={styles.coachMarkHeader}>
+                <View>
+                  <Text style={[styles.coachMarkKicker, { color: appTheme.accent2 }]}>
+                    {onboardingCoachStep === "mic" ? "Today's Reflection" : onboardingCoachStep === "journey" ? "Journey" : "Sanctuary"}
+                  </Text>
+                  <Text style={[styles.coachMarkTitle, themedTitle]}>
+                    {onboardingCoachStep === "mic"
+                      ? "Your first reflection"
+                      : onboardingCoachStep === "journey"
+                        ? "Watch your journey grow"
+                        : "Your sanctuary is waiting."}
+                  </Text>
+                </View>
+                <Pressable onPress={() => finishCoachMarks(true)} style={[styles.coachMarkClose, themedInk]}>
+                  <Text style={[styles.coachMarkCloseText, themedMuted]}>x</Text>
+                </Pressable>
+              </View>
+              <Text style={[styles.coachMarkBody, themedBody]}>
+                {onboardingCoachStep === "mic"
+                  ? "Talk for up to 60 seconds, or type instead."
+                  : onboardingCoachStep === "journey"
+                    ? "Your reflections help unlock peaceful sanctuary themes over time."
+                    : "As you reflect, you'll unlock peaceful new sanctuaries to explore."}
+              </Text>
+              <View style={styles.coachMarkMetaRow}>
+                <Text style={[styles.coachMarkProgress, themedMuted]}>
+                  {onboardingCoachStep === "mic" ? "1" : onboardingCoachStep === "journey" ? "2" : "3"} of 3
+                </Text>
+                <Pressable onPress={() => finishCoachMarks(true)} hitSlop={10}>
+                  <Text style={[styles.coachMarkSkipText, themedMuted]}>Skip</Text>
+                </Pressable>
+              </View>
+              <View style={styles.coachMarkActions}>
+                <Pressable onPress={nextCoachMark} style={[styles.coachMarkPrimary, { backgroundColor: appTheme.button }]}>
+                  <Text style={[styles.coachMarkPrimaryText, themedTitle]}>
+                    {onboardingCoachStep === "sanctuary" ? "Done" : "Continue ->"}
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </Modal>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={[styles.flex, { backgroundColor: appTheme.bg }]}
+        >
+          {tab === "coach" ? (
+            <ScrollView
+              style={styles.fitCoachScroll}
+              contentContainerStyle={styles.fitCoachShell}
+              keyboardShouldPersistTaps="never"
+              onScrollBeginDrag={Keyboard.dismiss}
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={styles.fitHeader}>
+                <View style={styles.fitBrandRow}>
+                  <Image source={TRANQLY_LOGO} style={styles.fitBrandLogo} resizeMode="contain" />
+                  <Text style={[styles.fitBrand, { color: appTheme.fg }, shortLayout && styles.fitBrandShort]}>
+                    Tranqly: Daily Reflections
+                  </Text>
+                </View>
+                <Text style={[styles.fitStreak, { color: appTheme.faint }]}>{streak} day streak</Text>
+              </View>
+
+              <View style={styles.fitHero}>
+                <Text style={[styles.fitEyebrow, { color: appTheme.dim }, shortLayout && styles.fitEyebrowShort]}>
+                  {greeting}{firstName ? `, ${firstName}` : ""}
+                </Text>
+                <Text style={[styles.fitSubline, { color: appTheme.dim }]}>
+                  Talk for 60 seconds. Understand yourself over time.
+                </Text>
+                <Text style={[styles.fitDiscoveryLine, { color: appTheme.accent2 }]}>
+                  Discover something new about yourself. Every day.
+                </Text>
+              </View>
+
+              {growthNotice ? (
+                <View style={[styles.growthNoticeCard, { backgroundColor: appTheme.helperBg, borderColor: appTheme.accent }]}>
+                  <Text style={[styles.growthNoticeText, { color: appTheme.accent2 }]}>{growthNotice}</Text>
+                </View>
+              ) : null}
+
+              {showSubmittedCoach && latestToday?.reply ? (
+                <>
+                <View style={[styles.fitSubmittedCard, { backgroundColor: appTheme.card, borderColor: appTheme.edge }, shortLayout && styles.fitSubmittedCardShort]}>
+                  <Text style={[styles.fitKicker, { color: appTheme.accent2 }]}>Today&apos;s Reflection</Text>
+                  <View style={styles.fitPromptBlock}>
+                    <Text style={[styles.fitPromptText, { color: appTheme.fg }]}>{dailyPrompt}</Text>
+                    {promptSelection.whyThisQuestion ? (
+                      <Text style={[styles.promptReasonText, { color: appTheme.faint }]}>
+                        {promptSelection.whyThisQuestion}
+                      </Text>
+                    ) : null}
+                    <Pressable
+                      onPress={() => setPromptOffset((value) => value + 1)}
+                      style={styles.anotherPromptButton}
+                    >
+                      <Text style={[styles.anotherPromptText, { color: appTheme.accent }]}>Refresh Prompt</Text>
+                    </Pressable>
+                  </View>
+                  <View style={[styles.fitFollowUpComposer, shortLayout && styles.fitFollowUpComposerShort]}>
+                    <View style={styles.fitFollowUpStack}>
+                      <View style={styles.fitMicPulseWrap}>
+                        <Animated.View
+                          pointerEvents="none"
+                          style={[
+                            styles.fitFollowUpPulse,
+                            {
+                              backgroundColor: appTheme.accent,
+                              opacity: micPulse.interpolate({
+                                inputRange: [1, 1.12],
+                                outputRange: [0.36, 0],
+                              }),
+                              transform: [{ scale: micPulse }],
+                            },
+                          ]}
+                        />
+                        <Pressable
+                          onPress={() => {
+                            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                            void toggleRecord();
+                          }}
+                          disabled={transcribing || pending}
+                          style={({ pressed }) => [
+                            styles.fitFollowUpMic,
+                            { backgroundColor: appTheme.ink, shadowColor: appTheme.accent },
+                            recording && styles.fitMicButtonRecording,
+                            pressed && styles.micPressed,
+                            (transcribing || pending) && styles.micDisabled,
+                          ]}
+                        >
+                          <Svg width={41} height={41} viewBox="0 0 24 24" fill="none">
+                            <Path
+                              d="M9 4a3 3 0 0 1 6 0v7a3 3 0 0 1-6 0V4Z"
+                              stroke={appTheme.accent2}
+                              strokeWidth={2}
+                            />
+                            <Path
+                              d="M5 10.5a7 7 0 0 0 14 0M12 18v3M8.5 21h7"
+                              stroke={appTheme.accent2}
+                              strokeWidth={2}
+                              strokeLinecap="round"
+                            />
+                          </Svg>
+                        </Pressable>
+                      </View>
+                      {voiceProgressBar}
+                      <Text style={[styles.fitFollowUpHint, { color: appTheme.faint }]}>
+                        {recording
+                          ? "I'm listening... tap when you're done"
+                          : "Tap to speak, or type below"}
+                      </Text>
+                      <TextInput
+                        value={text}
+                        onChangeText={setText}
+                        placeholder={
+                          transcribing
+                            ? "Transcribing your voice..."
+                            : "Ask Tranqly a follow-up, or add more for today."
+                        }
+                        placeholderTextColor={appTheme.faint}
+                        multiline
+                        blurOnSubmit
+                        returnKeyType="done"
+                        onSubmitEditing={Keyboard.dismiss}
+                        style={[styles.fitFollowUpInput, { backgroundColor: appTheme.ink, borderColor: appTheme.edge, color: appTheme.fg }, shortLayout && styles.fitFollowUpInputShort]}
+                      />
+                    </View>
+                    <Pressable
+                      disabled={!text.trim() || pending || transcribing}
+                      style={[
+                        styles.fitShareButton,
+                        (!text.trim() || pending || transcribing) && styles.disabled,
+                      ]}
+                      onPress={submit}
+                    >
+                      <LinearGradient
+                        colors={
+                          !text.trim() || pending || transcribing
+                            ? [appTheme.disabled, appTheme.disabled]
+                            : [appTheme.button, appTheme.button]
+                        }
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 0 }}
+                        style={styles.fitFollowUpShare}
+                      >
+                        <Text
+                          style={[
+                            styles.fitWeeklyButtonText,
+                            { color: appTheme.fg },
+                            (!text.trim() || pending || transcribing) && { color: appTheme.dim },
+                          ]}
+                        >
+                          Get Insights
+                        </Text>
+                      </LinearGradient>
+                    </Pressable>
+                  </View>
+                </View>
+                <View style={[styles.fitSubmittedCard, { backgroundColor: appTheme.card, borderColor: appTheme.edge }, shortLayout && styles.fitSubmittedCardShort]}>
+                  <Text style={[styles.fitKicker, { color: appTheme.accent2 }]}>Today&apos;s Insight</Text>
+                  <Text style={[styles.fitSubmittedTitle, { color: appTheme.fg }, shortLayout && styles.fitSubmittedTitleShort]}>
+                    {latestToday.reply.title ?? "Today I noticed..."}
+                  </Text>
+                  <Text style={[styles.fitSubmittedBody, { color: appTheme.dim }, shortLayout && styles.fitSubmittedBodyShort]}>
+                    {latestToday.reply.message}
+                  </Text>
+                  <Pressable onPress={() => openCoachModal(latestToday.text, latestToday.reply!)}>
+                    <Text style={[styles.inlinePremiumLink, { color: appTheme.accent }]}>See more</Text>
+                  </Pressable>
+                </View>
+                </>
+              ) : (
+                <>
+              <View style={[styles.fitComposer, { backgroundColor: appTheme.card, borderColor: appTheme.edge }, shortLayout && styles.fitComposerShort]}>
+                <View style={styles.fitPromptBlock}>
+                  <Text style={[styles.fitKicker, { color: appTheme.accent2 }]}>Today&apos;s Discovery</Text>
+                  <Text style={[styles.fitPromptText, { color: appTheme.fg }]}>{dailyPrompt}</Text>
+                  {promptSelection.whyThisQuestion ? (
+                    <Text style={[styles.promptReasonText, { color: appTheme.faint }]}>
+                      {promptSelection.whyThisQuestion}
+                    </Text>
+                  ) : null}
+                  <Pressable
+                    onPress={() => setPromptOffset((value) => value + 1)}
+                    style={styles.anotherPromptButton}
+                  >
+                    <Text style={[styles.anotherPromptText, { color: appTheme.accent }]}>Refresh Prompt</Text>
+                  </Pressable>
+                </View>
+                <View style={[styles.fitMicWrap, shortLayout && styles.fitMicWrapShort]}>
+                  <View style={styles.fitMicPulseWrap}>
+                    <Animated.View
+                      pointerEvents="none"
+                      style={[
+                        styles.fitMicPulse,
+                        shortLayout && styles.fitMicPulseShort,
+                        {
+                          backgroundColor: appTheme.accent,
+                          opacity: micPulse.interpolate({
+                            inputRange: [1, 1.12],
+                            outputRange: [0.36, 0],
+                          }),
+                          transform: [{ scale: micPulse }],
+                        },
+                      ]}
+                    />
+                    <Pressable
+                      onPress={() => {
+                        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                        void toggleRecord();
+                      }}
+                      disabled={transcribing || pending}
+                      style={({ pressed }) => [
+                        styles.fitMicButton,
+                        { backgroundColor: appTheme.ink, shadowColor: appTheme.accent },
+                        shortLayout && styles.fitMicButtonShort,
+                        recording && styles.fitMicButtonRecording,
+                        pressed && styles.micPressed,
+                        (transcribing || pending) && styles.micDisabled,
+                      ]}
+                    >
+                    {recording ? (
+                      <View style={styles.waveformRow}>
+                        {[18, 34, 24, 42, 28, 36, 20].map((height, index) => (
+                          <Animated.View
+                            key={index}
+                            style={[
+                              styles.waveformBar,
+                              { backgroundColor: appTheme.accent2 },
+                              {
+                                height,
+                                transform: [
+                                  {
+                                    scaleY: micPulse.interpolate({
+                                      inputRange: [1, 1.12],
+                                      outputRange: [0.65 + (index % 3) * 0.1, 1],
+                                    }),
+                                  },
+                                ],
+                              },
+                            ]}
+                          />
+                        ))}
+                      </View>
+                    ) : transcribing ? (
+                      <Text style={styles.fitMicLoading}>...</Text>
+                    ) : (
+                      <Svg width={shortLayout ? 44 : 50} height={shortLayout ? 44 : 50} viewBox="0 0 24 24" fill="none">
+                        <Path
+                          d="M9 4a3 3 0 0 1 6 0v7a3 3 0 0 1-6 0V4Z"
+                          stroke={appTheme.accent2}
+                          strokeWidth={2.2}
+                        />
+                        <Path
+                          d="M5 10.5a7 7 0 0 0 14 0M12 18v3M8.5 21h7"
+                          stroke={appTheme.accent2}
+                          strokeWidth={2.2}
+                          strokeLinecap="round"
+                        />
+                      </Svg>
+                    )}
+                    </Pressable>
+                  </View>
+                  {voiceProgressBar}
+                  <Text style={[styles.fitVoiceHint, { color: appTheme.faint }, shortLayout && styles.fitVoiceHintShort]}>
+                    {captured
+                      ? "Reflection captured"
+                      : recording
+                      ? "Speak naturally."
+                      : transcribing
+                        ? "Turning your voice into text..."
+                        : "Tap the mic, or type below"}
+                  </Text>
+                </View>
+
+                {false && showTranscriptPreview && text.trim() ? (
+                  <View style={styles.fitTranscriptCard}>
+                    <Text style={styles.fitKicker}>Here&apos;s what I heard</Text>
+                    <Text style={styles.fitTranscriptText}>"{text.trim()}"</Text>
+                  </View>
+                ) : null}
+
+                <View style={[styles.fitStatusCard, { backgroundColor: appTheme.ink, borderColor: appTheme.edge }]}>
+                  <Text
+                    style={[
+                      styles.fitStatusText,
+                      { color: composerError ? "#F6A6B2" : appTheme.accent2 },
+                      shortLayout && styles.fitStatusTextShort,
+                    ]}
+                  >
+                    {composerStatus}
+                  </Text>
+                </View>
+
+                <TextInput
+                  value={text}
+                  onChangeText={setText}
+                  placeholder={
+                    recording
+                      ? "Your thoughts will appear here..."
+                      : transcribing
+                      ? "Transcribing your voice..."
+                      : "Add more details, or type your reflection here."
+                  }
+                  placeholderTextColor={appTheme.faint}
+                  multiline
+                  blurOnSubmit
+                  returnKeyType="done"
+                  onSubmitEditing={Keyboard.dismiss}
+                  style={[styles.fitInput, { backgroundColor: appTheme.ink, borderColor: appTheme.edge, color: appTheme.fg }, shortLayout && styles.fitInputShort]}
+                />
+              </View>
+
+              <View style={[styles.fitBasedCard, { backgroundColor: appTheme.helperBg, borderColor: appTheme.helperEdge }, shortLayout && styles.fitBasedCardShort]}>
+                <Text style={[styles.fitKicker, { color: appTheme.accent2 }]}>Need a little help?</Text>
+                <Text style={[styles.fitCardText, { color: appTheme.dim }, shortLayout && styles.fitCardTextShort]}>
+                  {inspirationFor(text)}
+                </Text>
+              </View>
+
+              <Pressable
+                disabled={!text.trim() || pending || transcribing || Boolean(recording)}
+                style={[
+                  styles.fitShareButton,
+                  (!text.trim() || pending || transcribing || Boolean(recording)) && styles.disabled,
+                ]}
+                onPress={submit}
+              >
+                <LinearGradient
+                  colors={
+                    !text.trim() || pending || transcribing || Boolean(recording)
+                      ? [appTheme.disabled, appTheme.disabled]
+                      : [appTheme.button, appTheme.button]
+                  }
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={[styles.fitShareGradient, shortLayout && styles.fitShareGradientShort]}
+                >
+                  {pending ? (
+                    <ActivityIndicator color={appTheme.fg} />
+                  ) : (
+                    <Text
+                      style={[
+                        styles.shareText,
+                        { color: appTheme.fg },
+                        (!text.trim() || pending || transcribing || Boolean(recording)) && { color: appTheme.dim },
+                        shortLayout && styles.shareTextShort,
+                      ]}
+                    >
+                      Get Insights
+                    </Text>
+                  )}
+                </LinearGradient>
+              </Pressable>
+                </>
+              )}
+
+              <View style={[styles.fitWeeklyPreview, { backgroundColor: appTheme.weeklyBg, borderColor: appTheme.edge }, shortLayout && styles.fitWeeklyPreviewShort]}>
+                <View style={styles.fitWeeklyHeader}>
+                  <Text style={[styles.fitKicker, { color: appTheme.accent2 }]}>Weekly Reflection</Text>
+                  <Text style={[styles.fitWeeklyCount, { color: appTheme.accent2 }]}>
+                    Sunday
+                  </Text>
+                </View>
+                <View style={styles.fitWeeklyProgress} accessibilityLabel={`${Math.min(7, weekCheckInCount)} of 7 check-ins complete`}>
+                  {Array.from({ length: 7 }, (_, index) => (
+                    <View
+                      key={index}
+                      style={[
+                        styles.fitWeeklyProgressSegment,
+                        { backgroundColor: appTheme.ink },
+                        index < Math.min(7, weekCheckInCount) && { backgroundColor: appTheme.accent },
+                      ]}
+                    />
+                  ))}
+                </View>
+                <Text style={[styles.fitWeeklyProgressText, { color: appTheme.fg }]}>
+                  {Math.min(7, weekCheckInCount)} of 7 complete
+                </Text>
+                {weekCheckInCount >= 7 ? (
+                  <Pressable
+                    onPress={() => {
+                      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                      setTab("journey");
+                    }}
+                    style={[styles.fitWeeklyButton, { backgroundColor: appTheme.button }]}
+                  >
+                    <Text style={[styles.fitWeeklyButtonText, { color: appTheme.fg }]}>Read Weekly Reflection</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            </ScrollView>
+          ) : null}
+
+          {false && tab === "coach" ? (
+            <View style={styles.coachShell}>
+              {/* Input section at top */}
+              <View style={[styles.inputSection, shortLayout && styles.inputSectionShort]}>
+                <View style={[styles.greeting, shortLayout && styles.greetingShort]}>
+                  <Text style={[styles.greetingName, shortLayout && styles.greetingNameShort]}>
+                    How are you feeling?
+                  </Text>
+                  <View style={[styles.greetingBadge, shortLayout && styles.greetingBadgeShort]}>
+                    <Text style={[styles.greetingEmoji, shortLayout && styles.greetingEmojiShort]}>
+                      *
+                    </Text>
+                    <Text style={[styles.greetingSub, shortLayout && styles.greetingSubShort]}>
+                      Share your thoughts with Tranqly
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={[styles.inputRow, shortLayout && styles.inputRowShort]}>
+                  <Pressable
+                    onPress={toggleRecord}
+                    disabled={transcribing || pending}
+                    style={({ pressed }) => [
+                      styles.micButton,
+                      shortLayout && styles.micButtonShort,
+                      pressed && styles.micPressed,
+                      (transcribing || pending) && styles.micDisabled,
+                    ]}
+                  >
+                    {recording ? (
+                      <View style={styles.recordingIndicator}>
+                        {[1, 2, 3].map((i) => (
+                          <View
+                            key={i}
+                            style={[
+                              styles.recordingRing,
+                              { width: 32 + i * 16, height: 32 + i * 16 },
+                            ]}
+                          />
+                        ))}
+                        <Text style={styles.micIcon}>Stop</Text>
+                      </View>
+                    ) : (
+                      <Text style={[styles.micIcon, shortLayout && styles.micIconShort]}>
+                        {transcribing ? "..." : "Mic"}
+                      </Text>
+                    )}
+                  </Pressable>
+
+                  <View style={[styles.textInputWrap, shortLayout && styles.textInputWrapShort]}>
+                    <TextInput
+                      value={text}
+                      onChangeText={setText}
+                      placeholder={
+                        transcribing
+                          ? "Transcribing your voice..."
+                          : "Big or small, whatever happened today. No judgment here."
+                      }
+                      placeholderTextColor="#5B6478"
+                      style={[styles.input, shortLayout && styles.inputShort]}
+                    />
+                  </View>
+                </View>
+
+                <Pressable
+                  disabled={!text.trim() || pending || transcribing}
+                  style={[
+                    styles.shareButton,
+                    (!text.trim() || pending || transcribing) &&
+                      styles.disabled,
+                    shortLayout && styles.shareButtonShort,
+                  ]}
+                  onPress={submit}
+                >
+                  <LinearGradient
+                    colors={
+                      !text.trim() || pending || transcribing
+                        ? ["#263142", "#263142"]
+                        : ["#B894FF", "#D8C4FF"]
+                    }
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={styles.shareGradient}
+                  >
+                    {pending ? (
+                      <ActivityIndicator color="#081014" />
+                    ) : (
+                      <Text style={[styles.shareText, shortLayout && styles.shareTextShort]}>Get Insights</Text>
+                    )}
+                  </LinearGradient>
+                </Pressable>
+              </View>
+
+              {/* Scrollable feed */}
+              <ScrollView
+                style={styles.coachFeed}
+                contentContainerStyle={styles.coachFeedContent}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
+                {todayMood && (
+                  <View style={[styles.moodChip, shortLayout && styles.moodChipShort]}>
+                    <Text style={[styles.moodChipText, shortLayout && styles.moodChipTextShort]}>
+                      {todayMood}
+                    </Text>
+                  </View>
+                )}
+
+                {lastDeepInsight && (
+                  <View style={[styles.deepCard, shortLayout && styles.deepCardShort]}>
+                    <View style={styles.deepHeader}>
+                      <Text style={styles.deepBadge}>DeepInsight</Text>
+                      {!premium && <Text style={styles.deepPremium}>PREMIUM</Text>}
+                    </View>
+                    <Text style={[styles.deepHeadline, shortLayout && styles.deepHeadlineShort]}>
+                      {lastDeepInsight?.headline}
+                    </Text>
+                    <Text style={[styles.deepBody, shortLayout && styles.deepBodyShort]}>
+                      {lastDeepInsight?.insight}
+                    </Text>
+                    <View style={[styles.deepSuggestionBox, shortLayout && styles.deepSuggestionBoxShort]}>
+                      <Text style={[styles.deepSuggestionText, shortLayout && styles.deepSuggestionTextShort]}>
+                        Tip: {lastDeepInsight?.suggestion}
+                      </Text>
+                    </View>
+                    <Text style={[styles.deepAffirmation, shortLayout && styles.deepAffirmationShort]}>
+                      {lastDeepInsight?.affirmation}
+                    </Text>
+                  </View>
+                )}
+
+                {checkIns.filter((c) => c.dateKey === todayKey()).length > 0 ? (
+                  <View style={{ gap: 10 }}>
+                    {checkIns.filter((c) => c.dateKey === todayKey()).map((c) => (
+                      <View key={c.id}>
+                        <View style={[styles.userBubble, shortLayout && styles.userBubbleShort]}>
+                          <Text style={[styles.userBubbleText, shortLayout && styles.userBubbleTextShort]}>
+                            {c.text}
+                          </Text>
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                ) : (
+                  <Text style={[styles.emptyPrompt, shortLayout && styles.emptyPromptShort]}>
+                    Whatever today looked like, it's worth reflecting on.{'\n'}Tranqly is here. No judgment, ever.
+                  </Text>
+                )}
+
+                {pending && (
+                  <View style={styles.typingRow}>
+                    <Text style={styles.typingDot}>.</Text>
+                    <Text style={styles.typingDot}>.</Text>
+                    <Text style={styles.typingDot}>.</Text>
+                  </View>
+                )}
+              </ScrollView>
+            </View>
+          ) : null}
+
+          {tab === "journey" ? (
+            <ScrollView
+              contentContainerStyle={styles.journeyContent}
+              keyboardShouldPersistTaps="handled"
+              onScrollBeginDrag={Keyboard.dismiss}
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={styles.journeyHeader}>
+                <Text style={[styles.monthKicker, themedAccent2]}>Growth Over Time</Text>
+                <Text style={[styles.journeyTitle, themedTitle, shortLayout && styles.journeyTitleShort]}>
+                  Your journey
+                </Text>
+                <Text style={[styles.journeySubtitle, themedBody, shortLayout && styles.journeySubtitleShort]}>
+                  Today. This week. This month. Your growth.
+                </Text>
+              </View>
+
+              <View style={[styles.sanctuaryCard, themedCard]}>
+                <View style={styles.sanctuaryCardHeader}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.sanctuaryTitle, themedTitle]}>{selectedSanctuary.label}</Text>
+                    <Text style={[styles.sanctuarySubtitle, themedBody]}>Your Sanctuary</Text>
+                    <Text style={[styles.sanctuaryProgressText, themedMuted]}>
+                      You've spent {checkIns.length} quit moment{checkIns.length === 1 ? "" : "s"} here.
+                    </Text>
+                  </View>
+                  <Pressable
+                    onPress={() => {
+                      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                      setSanctuaryDetailTheme(sanctuaryTheme);
+                      setShowSanctuaryModal(true);
+                    }}
+                    style={[styles.sanctuaryTopButton, themedInk]}
+                  >
+                    <Text style={[styles.sanctuaryTopButtonText, themedAccent]}>Explore Sanctuary</Text>
+                  </Pressable>
+                </View>
+                <View style={styles.sanctuaryArtworkFrame}>
+                  <Image source={selectedSanctuary.artwork} style={styles.sanctuaryArtworkImage} resizeMode="cover" />
+                  <LinearGradient
+                    colors={["rgba(11,14,20,0)", "rgba(11,14,20,0.82)"]}
+                    style={StyleSheet.absoluteFill}
+                  />
+                  <Text style={[styles.sanctuaryArtworkText, themedTitle]}>{selectedSanctuary.description}</Text>
+                </View>
+                <View style={[styles.sanctuaryProgressBox, themedInk]}>
+                  <View style={styles.sanctuaryStatBlock}>
+                    <SproutStatIcon color={appTheme.accent2} />
+                    <View style={styles.sanctuaryStatCopy}>
+                      <Text style={[styles.sanctuaryDays, themedAccent2]} numberOfLines={1} adjustsFontSizeToFit>
+                        {checkIns.length}
+                      </Text>
+                      <Text style={[styles.sanctuaryProgressText, themedMuted]} numberOfLines={1}>Quit moments</Text>
+                    </View>
+                  </View>
+                  <View style={styles.sanctuaryDivider} />
+                  <View style={styles.sanctuaryStatBlock}>
+                    <Text style={styles.sanctuaryStatIcon}>Streak</Text>
+                    <View style={styles.sanctuaryStatCopy}>
+                      <Text style={[styles.sanctuaryDays, themedAccent2]} numberOfLines={1} adjustsFontSizeToFit>{streak}</Text>
+                      <Text style={[styles.sanctuaryProgressText, themedMuted]} numberOfLines={1}>Streak</Text>
+                    </View>
+                  </View>
+                  <View style={styles.sanctuaryDivider} />
+                  <View style={styles.sanctuaryUnlockBlock}>
+                    <Text style={[styles.sanctuaryProgressText, themedMuted]}>Next Sanctuary</Text>
+                    <Text style={[styles.sanctuaryUnlockName, themedTitle]}>
+                      {upcomingSanctuary?.label ?? "All sanctuaries"}
+                    </Text>
+                    <Text style={[styles.sanctuaryNext, themedAccent2]}>
+                      {upcomingSanctuary
+                        ? `Unlocks in ${reflectionsToNextSanctuary} reflection${reflectionsToNextSanctuary === 1 ? "" : "s"}`
+                        : "Sanctuary collection complete"}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+
+              <View style={[styles.monthCard, themedCard]}>
+                <Text style={[styles.monthKicker, themedAccent2]}>This Month's Growth</Text>
+                <View style={styles.monthGrid}>
+                  <View style={[styles.monthTile, themedInk]}>
+                    <View style={styles.monthIconWrap}>
+                      <MonthIcon type="calm" size={58} />
+                    </View>
+                    <Text style={[styles.monthLabel, { color: monthIconColors.calm }]}>Calm</Text>
+                    <Text style={[styles.monthValue, themedTitle]}>{monthStats.calm}</Text>
+                  </View>
+                  <View style={[styles.monthTile, themedInk]}>
+                    <View style={styles.monthIconWrap}>
+                      <MonthIcon type="consistency" size={58} />
+                    </View>
+                    <Text style={[styles.monthLabel, { color: monthIconColors.consistency }]}>Consistency</Text>
+                    <Text style={[styles.monthValue, themedTitle]}>{monthStats.consistency}</Text>
+                  </View>
+                  <View style={[styles.monthTile, themedInk]}>
+                    <View style={styles.monthIconWrap}>
+                      <MonthIcon type="gratitude" size={58} />
+                    </View>
+                    <Text style={[styles.monthLabel, { color: monthIconColors.gratitude }]}>Gratitude</Text>
+                    <Text style={[styles.monthValue, themedTitle]}>{monthStats.gratitude}</Text>
+                  </View>
+                  <View style={[styles.monthTile, themedInk]}>
+                    <View style={styles.monthIconWrap}>
+                      <MonthIcon type="stress" size={58} />
+                    </View>
+                    <Text style={[styles.monthLabel, { color: monthIconColors.stress }]}>Stress</Text>
+                    <Text style={[styles.monthValue, themedTitle]}>{monthStats.stress}</Text>
+                  </View>
+                </View>
+              </View>
+
+              <View style={[styles.journeyCard, themedCard]}>
+                <Text style={[styles.journeySectionTitle, themedAccent2]}>Patterns Growing</Text>
+                <View style={{ marginTop: 10, gap: 8 }}>
+                  {journeyMemory.memoryFacts.map((fact) => (
+                    <View key={fact} style={[styles.patternObservationRow, themedInk]}>
+                      <Text style={[styles.patternObservationCheck, themedAccent]}>›</Text>
+                      <Text style={[styles.journeyCardText, themedBody, { flex: 1 }]}>{fact}</Text>
+                    </View>
+                  ))}
+                </View>
+                <Text style={[styles.journeyUpdated, themedMuted]}>Updated today</Text>
+              </View>
+
+              {false && lastDeepInsight && (
+                <View style={[styles.deepCard, { marginBottom: 16 }, shortLayout && styles.deepCardShort]}>
+                  <View style={styles.deepHeader}>
+                    <Text style={styles.deepBadge}>DeepInsight</Text>
+                    {!premium && <Text style={styles.deepPremium}>PREMIUM</Text>}
+                  </View>
+                  <Text style={[styles.deepHeadline, shortLayout && styles.deepHeadlineShort]}>
+                    {lastDeepInsight?.headline}
+                  </Text>
+                  <Text style={[styles.deepBody, shortLayout && styles.deepBodyShort]}>
+                    {lastDeepInsight?.insight}
+                  </Text>
+                  <View style={[styles.deepSuggestionBox, shortLayout && styles.deepSuggestionBoxShort]}>
+                    <Text style={[styles.deepSuggestionText, shortLayout && styles.deepSuggestionTextShort]}>
+                      Tip: {lastDeepInsight?.suggestion}
+                    </Text>
+                  </View>
+                  <Text style={[styles.deepAffirmation, shortLayout && styles.deepAffirmationShort]}>
+                    {lastDeepInsight?.affirmation}
+                  </Text>
+                </View>
+              )}
+{false && <View style={styles.journeyCard}>
+                <Text style={styles.journeySectionTitle}>Monthly Patterns</Text>
+                <View style={styles.patternGrid}>
+                  {["Stress trend", "Gratitude trend", "Motivation trend", "Work and family themes"].map((item) => (
+                    <View key={item} style={styles.patternTile}>
+                      <Text style={styles.patternText}>{item}</Text>
+                    </View>
+                  ))}
+                </View>
+                <Pressable onPress={openPremium}>
+                  <Text style={styles.inlinePremiumLink}>Unlock monthly patterns</Text>
+                </Pressable>
+              </View>}
+
+              {false && <View style={styles.journeyCard}>
+                <Text style={styles.journeySectionTitle}>Milestones</Text>
+                <View style={styles.milestoneRow}>
+                  {["7 check-ins", "First weekly insight", "Most reflective week", "Biggest personal win"].map((item) => (
+                    <View key={item} style={styles.milestonePill}>
+                      <Text style={styles.milestoneText}>{item}</Text>
+                    </View>
+                  ))}
+                </View>
+              </View>}
+
+              {false && <View style={styles.askCard}>
+                <Text style={styles.askTitle}>Ask Tranqly</Text>
+                <Text style={styles.journeyCardText}>
+                  Ask questions about your reflection history, like what keeps stressing you out or what helped you feel better this month.
+                </Text>
+                <Pressable
+                  onPress={openPremium}
+                  style={styles.askButton}
+                >
+                  <Text style={styles.askButtonText}>Unlock Ask Tranqly</Text>
+                </Pressable>
+              </View>}
+
+              {/* Recent reflections */}
+              {grouped.length === 0 ? (
+                <View style={[styles.emptyState, shortLayout && styles.emptyStateShort]}>
+                  <Text style={[styles.emptyIcon, shortLayout && styles.emptyIconShort]}>Note</Text>
+                  <Text style={[styles.emptyText, shortLayout && styles.emptyTextShort]}>
+                    No entries yet. Start your journey today.
+                  </Text>
+                </View>
+              ) : (
+                <View style={{ paddingBottom: 100 }}>
+                  <Text style={[styles.journeySectionTitle, themedAccent2]}>Recent Reflections</Text>
+                  {recentJourneyGroups.map(({ dateKey, entries }) => (
+                    <View key={dateKey} style={styles.historyGroup}>
+                      <Text style={[styles.historyDateHeader, themedMuted, shortLayout && styles.historyDateHeaderShort]}>
+                        {dateKey === today ? "Today" : formatDate(dateKey)}
+                      </Text>
+                      {entries.map((c) => (
+                        <View key={c.id} style={[styles.historyItem, themedCard]}>
+                          <Text style={[styles.date, themedMuted]}>
+                            {formatTime(c.createdAt)}
+                          </Text>
+                          <Text style={[styles.historyText, themedBody]}>{c.text}</Text>
+                          <View style={styles.journeyChipRow}>
+                            {journeyTagsForText(c.text).map((tag) => (
+                              <View key={tag.key} style={[styles.journeyMiniChip, { backgroundColor: appTheme.helperBg, borderColor: appTheme.helperEdge }]}>
+                                <JourneyTagIcon type={tag.key} color={appTheme.faint} />
+                                <Text style={[styles.journeyMiniChipText, themedAccent]}>{tag.label}</Text>
+                              </View>
+                            ))}
+                          </View>
+                          {c.reply && (
+                            <Pressable
+                              onPress={() => openCoachModal(c.text, c.reply!)}
+                              style={({ pressed }) => [
+                                styles.coachReplyIndicator,
+                                { backgroundColor: appTheme.helperBg, borderColor: appTheme.helperEdge },
+                                pressed && { opacity: 0.7 },
+                              ]}
+                            >
+                              <Text style={[styles.coachReplyIndicatorText, themedAccent]}>View Tranqly response</Text>
+                              <Text style={[styles.coachReplyArrow, themedAccent]}>-&gt;</Text>
+                            </Pressable>
+                          )}
+                        </View>
+                      ))}
+                    </View>
+                  ))}
+                  {checkIns.length > 5 ? (
+                    <Pressable
+                      style={[styles.fitWeeklyButton, { backgroundColor: appTheme.button }]}
+                      onPress={() => setShowAllReflections((value) => !value)}
+                    >
+                      <Text style={[styles.fitWeeklyButtonText, themedTitle]}>
+                        {showAllReflections ? "Show recent" : "View all reflections"}
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              )}
+
+
+              <Pressable style={[styles.journeyPremiumCard, themedWeekly]} onPress={openPremium}>
+                <View style={styles.premiumHeader}>
+                  <Text style={[styles.journeySectionTitle, themedAccent2]}>Weekly Reflection</Text>
+                  <View style={styles.premiumPillWrap}>
+                    <Text style={[styles.premiumCrown, themedAccent]}>Plus</Text>
+                    <Text style={[styles.premiumPill, themedAccent]}>Premium</Text>
+                  </View>
+                </View>
+                <Text style={[styles.journeyCardText, themedBody]}>
+                  Unlock your full weekly reflection every Sunday.
+                </Text>
+                <Text style={[styles.inlinePremiumLink, themedAccent]}>Unlock weekly reflection</Text>
+              </Pressable>
+
+                          </ScrollView>
+          ) : null}
+
+          {tab === "you" ? (
+            <ScrollView
+              contentContainerStyle={styles.youContent}
+              keyboardShouldPersistTaps="handled"
+              onScrollBeginDrag={Keyboard.dismiss}
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={styles.youHeader}>
+                <Text style={[styles.youTitle, themedTitle, shortLayout && styles.youTitleShort]}>You</Text>
+              </View>
+
+              <View style={[styles.youCard, themedCard]}>
+                <Text style={[styles.youSectionTitle, themedAccent2]}>Preferences</Text>
+                <Text style={[styles.youInputLabel, themedTitle]}>Your name</Text>
+                <TextInput
+                  value={displayName}
+                  onChangeText={setDisplayName}
+                  placeholder="What should Tranqly call you?"
+                  placeholderTextColor={appTheme.faint}
+                  style={[styles.youInput, themedInk, themedTitle]}
+                />
+              </View>
+
+              <View style={[styles.youCard, themedCard]}>
+                <View style={styles.authCardHeader}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.youSectionTitle, themedAccent2]}>Account</Text>
+                    <Text style={[styles.youCardBody, themedBody]}>
+                      {authUser
+                        ? `Signed in as ${authUser.email}.`
+                        : "Sign in to sync your reflections across devices and keep your sanctuary backed up."}
+                    </Text>
+                  </View>
+                  <Text style={[styles.authStatusPill, { borderColor: appTheme.edge, color: appTheme.accent }]}>
+                    {authUser ? "Synced" : "Local"}
+                  </Text>
+                </View>
+                {authUser ? (
+                  <View style={styles.authForm}>
+                    <View style={[styles.authSummaryCard, themedInk]}>
+                      <Text style={[styles.authSummaryLabel, themedAccent2]}>Signed in as</Text>
+                      <Text style={[styles.authSummaryValue, themedTitle]}>{authUser.email}</Text>
+                      <Text style={[styles.youCardMuted, themedMuted]}>
+                        Your reflections are backed up and ready across devices.
+                      </Text>
+                    </View>
+                    <View style={styles.authButtonRow}>
+                      <Pressable
+                        style={[styles.authSecondaryButton, { borderColor: appTheme.edge }]}
+                        onPress={() => setAuthNotice("Your Tranqly account is already connected on this device.")}
+                      >
+                        <Text style={[styles.authSecondaryText, themedAccent]}>Manage account</Text>
+                      </Pressable>
+                      <Pressable style={[styles.authPrimaryButton, { backgroundColor: appTheme.button }]} onPress={signOutMobile}>
+                        <Text style={[styles.authPrimaryText, themedTitle]}>Sign out</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                ) : (
+                  <View style={styles.authForm}>
+                    <Pressable
+                      disabled={authBusy}
+                      style={[styles.authSecondaryButton, { borderColor: appTheme.edge }]}
+                      onPress={() => setAuthNotice("Apple sign-in is not configured for this mobile build yet.")}
+                    >
+                      <Text style={[styles.authSecondaryText, themedTitle]}>{authBusy ? "Working..." : "Continue with Apple"}</Text>
+                    </Pressable>
+                    <Pressable
+                      disabled={authBusy}
+                      style={[styles.authSecondaryButton, { borderColor: appTheme.edge }]}
+                      onPress={() => setAuthNotice("Google sign-in is not configured for this mobile build yet.")}
+                    >
+                      <Text style={[styles.authSecondaryText, themedTitle]}>{authBusy ? "Working..." : "Continue with Google"}</Text>
+                    </Pressable>
+                    <Pressable
+                      style={[styles.authPrimaryButton, { backgroundColor: appTheme.button }]}
+                      onPress={() => {
+                        setShowEmailAuth((value) => !value);
+                        setAuthNotice("");
+                      }}
+                    >
+                      <Text style={[styles.authPrimaryText, themedTitle]}>Continue with Email</Text>
+                    </Pressable>
+                    {showEmailAuth ? (
+                      <View style={[styles.authEmailCard, themedInk]}>
+                        <TextInput
+                          value={authEmail}
+                          onChangeText={setAuthEmail}
+                          placeholder="Email"
+                          placeholderTextColor={appTheme.faint}
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                          keyboardType="email-address"
+                          style={[styles.youInput, { backgroundColor: appTheme.card, color: appTheme.fg, borderColor: appTheme.edge }]}
+                        />
+                        <TextInput
+                          value={authPassword}
+                          onChangeText={setAuthPassword}
+                          placeholder="Password"
+                          placeholderTextColor={appTheme.faint}
+                          secureTextEntry
+                          style={[styles.youInput, { backgroundColor: appTheme.card, color: appTheme.fg, borderColor: appTheme.edge }]}
+                        />
+                        <View style={[styles.authSummaryCard, { backgroundColor: appTheme.card, borderColor: appTheme.edge }]}>
+                          <View style={styles.passwordHeaderRow}>
+                            <Text style={[styles.authSummaryLabel, themedAccent2]}>Password</Text>
+                            <Text style={[styles.youCardMuted, themedMuted]}>{passwordStrength}</Text>
+                          </View>
+                          {passwordRules.map((rule) => (
+                            <Text key={rule.key} style={[styles.passwordRuleText, rule.met ? themedAccent : themedMuted]}>
+                              {rule.met ? "✓" : "○"} {rule.label}
+                            </Text>
+                          ))}
+                        </View>
+                        <View style={styles.authButtonRow}>
+                          <Pressable
+                            disabled={authBusy}
+                            style={[styles.authPrimaryButton, { backgroundColor: appTheme.button }, authBusy && { opacity: 0.6 }]}
+                            onPress={() => submitMobileAuth("signIn")}
+                          >
+                            <Text style={[styles.authPrimaryText, themedTitle]}>{authBusy ? "Working..." : "Sign in"}</Text>
+                          </Pressable>
+                          <Pressable
+                            disabled={authBusy || !isPasswordValid(authPassword)}
+                            style={[styles.authSecondaryButton, { borderColor: appTheme.edge }, (authBusy || !isPasswordValid(authPassword)) && { opacity: 0.5 }]}
+                            onPress={() => submitMobileAuth("signUp")}
+                          >
+                            <Text style={[styles.authSecondaryText, themedAccent]}>Create account</Text>
+                          </Pressable>
+                        </View>
+                        <View style={styles.authMetaActions}>
+                          <Pressable onPress={sendMobilePasswordReset}>
+                            <Text style={[styles.authMetaText, themedAccent]}>Forgot password</Text>
+                          </Pressable>
+                          <Pressable onPress={() => setShowEmailAuth(false)}>
+                            <Text style={[styles.authMetaText, themedMuted]}>Back to sign-in options</Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    ) : null}
+                  </View>
+                )}
+                {authNotice ? <Text style={[styles.youCardMuted, themedMuted]}>{authNotice}</Text> : null}
+              </View>
+
+              <View style={[styles.youCard, themedCard]}>
+                <View style={styles.authCardHeader}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.youSectionTitle, themedAccent2]}>Notifications</Text>
+                    <Text style={[styles.youCardBody, themedBody]}>
+                      Gentle reminders for reflections, weekly insights, and new sanctuaries.
+                    </Text>
+                  </View>
+                  <Text style={[styles.authStatusPill, { borderColor: appTheme.edge, color: appTheme.accent }]}>
+                    {notificationSettings.permissionStatus}
+                  </Text>
+                </View>
+                {!notificationsExpanded ? (
+                  <View style={[styles.authSummaryCard, themedInk, { marginTop: 14 }]}>
+                    <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 12 }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.notificationLabel, themedTitle]}>Daily reflection reminder</Text>
+                        <Text style={[styles.youCardMuted, themedMuted]}>
+                          {notificationSettings.dailyReminderEnabled
+                            ? `${formatHourLabel(notificationSettings.dailyReminderTime)} • ${QUIET_MINUTE_OPTIONS.find((option) => option.key === notificationSettings.quietMinuteOption)?.label ?? "Custom"}`
+                            : "Off"}
+                        </Text>
+                        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+                          <View style={[styles.themePickerSmallButton, { borderColor: appTheme.edge, backgroundColor: appTheme.card }]}>
+                            <Text style={[styles.themePickerSmallText, themedMuted]}>
+                              Weekly {notificationSettings.weeklyInsightEnabled ? "On" : "Off"}
+                            </Text>
+                          </View>
+                          <View style={[styles.themePickerSmallButton, { borderColor: appTheme.edge, backgroundColor: appTheme.card }]}>
+                            <Text style={[styles.themePickerSmallText, themedMuted]}>
+                              Unlocks {notificationSettings.sanctuaryUnlockEnabled ? "On" : "Off"}
+                            </Text>
+                          </View>
+                        </View>
+                      </View>
+                      <Pressable
+                        onPress={() => setNotificationsExpanded(true)}
+                        style={[styles.themePickerSmallButton, { borderColor: appTheme.edge }]}
+                      >
+                        <Text style={[styles.themePickerSmallText, themedAccent]}>Edit</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                ) : (
+                  <View style={styles.authForm}>
+                    {notificationSettings.permissionStatus !== "granted" ? (
+                      <Pressable
+                        style={[styles.authPrimaryButton, { backgroundColor: appTheme.button, marginTop: 4 }]}
+                        onPress={async () => {
+                          const result = await requestNotificationPermission();
+                          if (result === "granted") {
+                            setNotificationDraft((current) => ({
+                              ...current,
+                              permissionStatus: "granted",
+                              dailyReminderEnabled: true,
+                            }));
+                          }
+                        }}
+                      >
+                        <Text style={[styles.authPrimaryText, themedTitle]}>Enable reminders</Text>
+                      </Pressable>
+                    ) : null}
+                    <Pressable
+                      style={[styles.notificationRow, themedInk]}
+                      onPress={() =>
+                        setNotificationDraft((current) => ({
+                          ...current,
+                          dailyReminderEnabled: !current.dailyReminderEnabled,
+                        }))
+                      }
+                    >
+                      <Text style={[styles.notificationLabel, themedTitle]}>Daily reflection reminder</Text>
+                      <Text style={[styles.notificationValue, themedAccent]}>
+                        {notificationDraft.dailyReminderEnabled ? "On" : "Off"}
+                      </Text>
+                    </Pressable>
+                    <View style={styles.notificationOptionsWrap}>
+                      {QUIET_MINUTE_OPTIONS.map((option) => (
+                        <Pressable
+                          key={option.key}
+                          style={[
+                            styles.notificationOptionChip,
+                            {
+                              borderColor:
+                                notificationDraft.quietMinuteOption === option.key
+                                  ? appTheme.accent
+                                  : appTheme.edge,
+                              backgroundColor:
+                                notificationDraft.quietMinuteOption === option.key
+                                  ? appTheme.helperBg
+                                  : appTheme.ink,
+                            },
+                          ]}
+                          onPress={() =>
+                            setNotificationDraft((current) => ({
+                              ...current,
+                              quietMinuteOption: option.key,
+                              dailyReminderTime:
+                                option.key === "custom" ? current.dailyReminderTime : option.suggestedTime,
+                            }))
+                          }
+                        >
+                          <Text style={[styles.notificationOptionText, notificationDraft.quietMinuteOption === option.key ? themedAccent : themedMuted]}>
+                            {option.label}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                    <View style={[styles.notificationRow, themedInk]}>
+                      <Text style={[styles.notificationLabel, themedTitle]}>Reminder time</Text>
+                      <Text style={[styles.notificationValue, themedAccent]}>
+                        {formatHourLabel(notificationDraft.dailyReminderTime)}
+                      </Text>
+                    </View>
+                    <Pressable
+                      style={[styles.notificationRow, themedInk]}
+                      onPress={() =>
+                        setNotificationDraft((current) => ({
+                          ...current,
+                          weeklyInsightEnabled: !current.weeklyInsightEnabled,
+                        }))
+                      }
+                    >
+                      <Text style={[styles.notificationLabel, themedTitle]}>Weekly insight reminder</Text>
+                      <Text style={[styles.notificationValue, themedAccent]}>
+                        {notificationDraft.weeklyInsightEnabled ? `Sunday ${formatHourLabel(notificationDraft.weeklyInsightTime)}` : "Off"}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      style={[styles.notificationRow, themedInk]}
+                      onPress={() =>
+                        setNotificationDraft((current) => ({
+                          ...current,
+                          sanctuaryUnlockEnabled: !current.sanctuaryUnlockEnabled,
+                        }))
+                      }
+                    >
+                      <Text style={[styles.notificationLabel, themedTitle]}>Sanctuary unlocks</Text>
+                      <Text style={[styles.notificationValue, themedAccent]}>
+                        {notificationDraft.sanctuaryUnlockEnabled ? "On" : "Off"}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      style={[styles.notificationRow, themedInk]}
+                      onPress={() =>
+                        setNotificationDraft((current) => ({
+                          ...current,
+                          quietHoursEnabled: !current.quietHoursEnabled,
+                        }))
+                      }
+                    >
+                      <Text style={[styles.notificationLabel, themedTitle]}>Quiet hours</Text>
+                      <Text style={[styles.notificationValue, themedAccent]}>
+                        {notificationDraft.quietHoursEnabled
+                          ? `${formatHourLabel(notificationDraft.quietHoursStart)} to ${formatHourLabel(notificationDraft.quietHoursEnd)}`
+                          : "Off"}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      style={[styles.notificationRow, themedInk]}
+                      onPress={() =>
+                        setNotificationDraft((current) => ({
+                          ...current,
+                          pauseReminders: !current.pauseReminders,
+                        }))
+                      }
+                    >
+                      <Text style={[styles.notificationLabel, themedTitle]}>Pause reminders</Text>
+                      <Text style={[styles.notificationValue, themedAccent]}>
+                        {notificationDraft.pauseReminders ? "Paused" : "Active"}
+                      </Text>
+                    </Pressable>
+                    {reminderSuggestion ? (
+                      <Pressable
+                        style={[styles.authSummaryCard, themedInk]}
+                        onPress={() =>
+                          setNotificationDraft((current) => ({
+                            ...current,
+                            reminderMode: "adaptive",
+                            dailyReminderTime: reminderSuggestion.time,
+                          }))
+                        }
+                      >
+                        <Text style={[styles.authSummaryLabel, themedAccent2]}>Adaptive suggestion</Text>
+                        <Text style={[styles.youCardMuted, themedMuted]}>{reminderSuggestion.copy}</Text>
+                      </Pressable>
+                    ) : null}
+                    <View style={[styles.authButtonRow, { marginTop: 6 }]}>
+                      <Pressable
+                        style={[styles.authSecondaryButton, { borderColor: appTheme.edge }]}
+                        onPress={() => {
+                          setNotificationDraft(notificationSettings);
+                          setNotificationsExpanded(false);
+                        }}
+                      >
+                        <Text style={[styles.authSecondaryText, themedAccent]}>Cancel</Text>
+                      </Pressable>
+                      <Pressable
+                        style={[styles.authPrimaryButton, { backgroundColor: appTheme.button }]}
+                        onPress={() => {
+                          void saveMobileNotificationSettings();
+                        }}
+                      >
+                        <Text style={[styles.authPrimaryText, themedTitle]}>Save</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                )}
+              </View>
+
+              <View style={[styles.youCard, themedCard]}>
+                <Text style={[styles.youSectionTitle, themedAccent2]}>Your Sanctuary</Text>
+                <View style={styles.currentSanctuaryBanner}>
+                  <Image source={selectedSanctuary.artwork} style={styles.currentSanctuaryImage} resizeMode="cover" />
+                  <LinearGradient
+                    colors={["rgba(11,14,20,0.12)", "rgba(11,14,20,0.88)"]}
+                    style={StyleSheet.absoluteFill}
+                  />
+                  <View style={styles.currentSanctuaryCopy}>
+                    <View style={[styles.sanctuaryThemeIconWrap, { borderColor: selectedSanctuary.accent }]}>
+                      <ThemeIcon type={selectedSanctuary.key} color={selectedSanctuary.accent} size={22} />
+                    </View>
+                    <Text style={styles.currentSanctuaryTitle}>{selectedSanctuary.label}</Text>
+                    <Text style={styles.currentSanctuaryText} numberOfLines={2}>{selectedSanctuary.description}</Text>
+                    <Text style={[styles.currentSanctuaryBadge, { color: selectedSanctuary.accent }]}>Selected</Text>
+                  </View>
+                </View>
+                <View style={styles.currentSanctuaryActions}>
+                  <Pressable
+                    onPress={() => {
+                      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      setShowThemePicker(true);
+                    }}
+                    style={[styles.themePreviewButton, { flex: 1, backgroundColor: appTheme.helperBg, borderColor: appTheme.edge }]}
+                  >
+                    <Text style={[styles.themePreviewButtonText, themedAccent]}>Change Theme</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => {
+                      setSanctuaryDetailTheme(sanctuaryTheme);
+                      setShowSanctuaryModal(true);
+                    }}
+                    style={[styles.themePreviewButton, { flex: 1, backgroundColor: appTheme.helperBg, borderColor: appTheme.edge }]}
+                  >
+                    <Text style={[styles.themePreviewButtonText, themedAccent]}>Explore Sanctuary</Text>
+                  </Pressable>
+                </View>
+              </View>
+
+              <Modal
+                visible={showThemePicker}
+                transparent
+                animationType="slide"
+                onRequestClose={() => setShowThemePicker(false)}
+              >
+                <View style={styles.themeModalBackdrop}>
+                  <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowThemePicker(false)} />
+                  <View style={[styles.themePickerCard, themedCard]}>
+                    <View style={styles.themePickerHeader}>
+                      <View>
+                        <Text style={[styles.themePreviewBadge, themedAccent]}>Choose Sanctuary</Text>
+                        <Text style={[styles.themePreviewTitle, themedTitle]}>Sanctuary themes</Text>
+                      </View>
+                      <Pressable onPress={() => setShowThemePicker(false)} style={styles.themeModalClose}>
+                        <Text style={[styles.themeModalCloseText, themedMuted]}>x</Text>
+                      </Pressable>
+                    </View>
+                    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 18 }}>
+                      {[
+                        ["Current", sanctuaryThemesByUnlock().filter((theme) => theme.key === sanctuaryTheme)],
+                        ["Available", sanctuaryThemesByUnlock().filter((theme) => theme.key !== sanctuaryTheme && isThemeUnlocked(theme, checkIns.length, premium))],
+                        ["Locked", sanctuaryThemesByUnlock().filter((theme) => !isThemeUnlocked(theme, checkIns.length, premium))],
+                      ].map(([label, rawThemes]) => {
+                        const themes = rawThemes as typeof SANCTUARY_THEMES;
+                        if (!themes.length) return null;
+                        return (
+                          <View key={label as string} style={styles.themePickerSection}>
+                            <Text style={[styles.youSectionTitle, themedAccent2]}>{label as string}</Text>
+                            <View style={styles.themePickerGrid}>
+                              {themes.map((theme) => {
+                                const unlocked = isThemeUnlocked(theme, checkIns.length, premium);
+                                return (
+                                  <Pressable
+                                    key={theme.key}
+                                    onPress={() => {
+                                      setSanctuaryDetailTheme(theme.key);
+                                      setShowThemePreview(true);
+                                    }}
+                                    style={({ pressed }) => [
+                                      styles.themePickerTile,
+                                      themedInk,
+                                      !unlocked && { opacity: 0.72 },
+                                      pressed && { opacity: 0.85 },
+                                    ]}
+                                  >
+                                    <Image source={theme.artwork} style={styles.themePickerImage} resizeMode="cover" />
+                                    <LinearGradient colors={["rgba(11,14,20,0)", "rgba(11,14,20,0.82)"]} style={StyleSheet.absoluteFill} />
+                                    <View style={styles.themePickerTileCopy}>
+                                      <ThemeIcon type={theme.key} color={theme.accent} size={22} />
+                                      <Text style={styles.themePickerTileTitle}>{theme.label}</Text>
+                                      <Text style={styles.themePickerTileSub} numberOfLines={1}>
+                                        {unlocked ? theme.feeling : themeProgressLabel(theme, checkIns.length, premium)}
+                                      </Text>
+                                      <View style={styles.themePickerActions}>
+                                        <Pressable
+                                          onPress={(event) => {
+                                            event.stopPropagation();
+                                            setSanctuaryDetailTheme(theme.key);
+                                            setShowThemePreview(true);
+                                          }}
+                                          style={styles.themePickerSmallButton}
+                                        >
+                                          <Text style={[styles.themePickerSmallText, { color: theme.accent }]}>Preview</Text>
+                                        </Pressable>
+                                        <Pressable
+                                          disabled={!unlocked}
+                                          onPress={(event) => {
+                                            event.stopPropagation();
+                                            setSanctuaryTheme(theme.key);
+                                            setDraftSanctuaryTheme(theme.key);
+                                            setShowThemePicker(false);
+                                          }}
+                                          style={[styles.themePickerSmallButton, !unlocked && { opacity: 0.45 }]}
+                                        >
+                                          <Text style={[styles.themePickerSmallText, { color: unlocked ? theme.accent : appTheme.faint }]}>
+                                            {sanctuaryTheme === theme.key ? "Selected" : unlocked ? "Select" : "Locked"}
+                                          </Text>
+                                        </Pressable>
+                                      </View>
+                                    </View>
+                                  </Pressable>
+                                );
+                              })}
+                            </View>
+                          </View>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+                </View>
+              </Modal>
+
+              {(() => {
+                const selected = detailSanctuary;
+                return (
+                  <Modal
+                    visible={showThemePreview}
+                    transparent
+                    animationType="slide"
+                    onRequestClose={() => setShowThemePreview(false)}
+                  >
+                    <View style={styles.themeModalBackdrop}>
+                      <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowThemePreview(false)} />
+                      <View style={[styles.themeModalCard, themedCard]}>
+                        <View style={styles.themeModalPicture}>
+                          <Image source={selected.artwork} style={styles.themeModalImage} resizeMode="cover" />
+                          <LinearGradient
+                            colors={["rgba(11,14,20,0)", "rgba(11,14,20,0.72)"]}
+                            style={StyleSheet.absoluteFill}
+                          />
+                          <Pressable
+                            onPress={() => setShowThemePreview(false)}
+                            style={styles.themeModalClose}
+                          >
+                            <Text style={[styles.themeModalCloseText, themedMuted]}>x</Text>
+                          </Pressable>
+                          <View style={styles.themeModalCopy}>
+                            <Text style={[styles.themePreviewBadge, { color: selected.accent }]}>Preview</Text>
+                            <Text style={[styles.themePreviewTitle, themedTitle]}>{selected.label}</Text>
+                            <Text style={[styles.themePreviewText, themedBody]}>{selected.description}</Text>
+                          </View>
+                        </View>
+                        <View style={styles.themeModalBody}>
+                          <View style={styles.themeAmbientRow}>
+                            {selected.ambient.map((effect) => (
+                              <Text key={effect} style={[styles.themeAmbientPill, themedMuted]}>
+                                {effect}
+                              </Text>
+                            ))}
+                          </View>
+                          <View style={styles.themeAmbientRow}>
+                            {selected.palette.map((color) => (
+                              <Text key={color} style={[styles.themePalettePill, themedMuted]}>
+                                {color}
+                              </Text>
+                            ))}
+                          </View>
+                          <View style={[styles.themeMockNav, themedInk]}>
+                            {TABS.map((tab, index) => {
+                              const Icon = tab.icon;
+                              return (
+                                <View key={tab.key} style={styles.themeMockNavItem}>
+                                  <Icon active={index === 0} />
+                                  <Text style={[styles.themeMockLabel, index === 0 && { color: selected.accent }]}>{tab.label}</Text>
+                                </View>
+                              );
+                            })}
+                          </View>
+                          <Pressable
+                            onPress={() => {
+                              if (!isThemeUnlocked(selected, checkIns.length, premium)) return;
+                              setSanctuaryTheme(selected.key);
+                              setDraftSanctuaryTheme(selected.key);
+                              setShowThemePreview(false);
+                              setShowThemePicker(false);
+                            }}
+                            disabled={sanctuaryTheme === selected.key || !isThemeUnlocked(selected, checkIns.length, premium)}
+                            style={[
+                              styles.themeApplyButton,
+                              { backgroundColor: appTheme.button },
+                              (sanctuaryTheme === selected.key || !isThemeUnlocked(selected, checkIns.length, premium)) && styles.themeApplyButtonDisabled,
+                            ]}
+                          >
+                            <Text style={[styles.themeApplyButtonText, themedTitle]}>
+                              {sanctuaryTheme === selected.key
+                                ? "Theme applied"
+                                : isThemeUnlocked(selected, checkIns.length, premium)
+                                  ? "Select Theme"
+                                  : themeProgressLabel(selected, checkIns.length, premium)}
+                            </Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    </View>
+                  </Modal>
+                );
+              })()}
+
+              <View style={[styles.youCard, themedCard]}>
+                <Text style={[styles.youSectionTitle, themedAccent2]}>Privacy</Text>
+                <Text style={[styles.youCardBody, themedBody]}>
+                  Your reflections are private to your account. Tranqly uses your past check-ins only to personalize your insights.
+                </Text>
+              </View>
+
+              <View style={[styles.youCard, themedCard]}>
+                <Text style={[styles.youSectionTitle, themedAccent2]}>What Tranqly remembers</Text>
+                <Text style={[styles.youCardBody, themedBody]}>
+                  Short notes are saved from your conversations so replies can feel more personal over time.
+                </Text>
+                <Text style={[styles.youCardMuted, themedMuted]}>
+                  Tranqly has not learned anything durable yet. The more you check in, the more personal it gets.
+                </Text>
+              </View>
+
+              <View style={[styles.youCard, themedCard]}>
+                <Text style={[styles.youSectionTitle, themedAccent2]}>Data controls</Text>
+                <Pressable
+                  style={[styles.dataControlButton, themedInk]}
+                  onPress={() => Alert.alert("Memory reset", "Tranqly will rebuild memory from future check-ins.")}
+                >
+                  <Text style={[styles.dataControlText, themedBody]}>Reset memory profile</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.dataControlButton, themedInk]}
+                  onPress={() => {
+                    setOnboardingName(displayName);
+                    setOnboardingCompleted(true);
+                    setOnboardingStep("intro");
+                    setOnboardingCoachCompleted(false);
+                    setOnboardingCoachStep("mic");
+                    setOnboardingSkippedAt(null);
+                    setOnboardingCoachCompletedAt(null);
+                    setTab("coach");
+                  }}
+                >
+                  <Text style={[styles.dataControlText, themedBody]}>Replay onboarding walkthrough</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.dangerButton}
+                  onPress={() =>
+                    Alert.alert("Delete reflections?", "This removes all local reflections and resets Tranqly memory.", [
+                      { text: "Cancel", style: "cancel" },
+                      {
+                        text: "Delete",
+                        style: "destructive",
+                        onPress: () => {
+                          setCheckIns([]);
+                          setLastDeepInsight(null);
+                          setMoods({});
+                        },
+                      },
+                    ])
+                  }
+                >
+                  <Text style={styles.dangerButtonText}>Delete all reflections</Text>
+                </Pressable>
+              </View>
+
+              <Text style={styles.youFooter}>Tranqly - your reflections live on your device</Text>
+            </ScrollView>
+          ) : null}
+
+          {false && tab === "you" ? (
+            <ScrollView contentContainerStyle={styles.youContent} showsVerticalScrollIndicator={false}>
+              <View style={styles.youHeader}>
+                <View>
+                  <Text style={[styles.youTitle, shortLayout && styles.youTitleShort]}>You</Text>
+                  <Text style={[styles.youSub, shortLayout && styles.youSubShort]}>
+                    {checkIns.length} check-in{checkIns.length !== 1 ? "s" : ""}
+                  </Text>
+                </View>
+                <View style={styles.youAvatar}>
+                  <Text style={styles.youAvatarText}>*</Text>
+                </View>
+              </View>
+
+              <View style={styles.youCard}>
+                <View style={styles.youCardRow}>
+                  <Text style={[styles.youCardLabel, shortLayout && styles.youCardLabelShort]}>Current streak</Text>
+                  <Text style={[styles.youCardValue, shortLayout && styles.youCardValueShort]}>{streak} days</Text>
+                </View>
+                <View style={styles.youCardDivider} />
+                <View style={styles.youCardRow}>
+                  <Text style={[styles.youCardLabel, shortLayout && styles.youCardLabelShort]}>Best streak</Text>
+                  <Text style={[styles.youCardValue, shortLayout && styles.youCardValueShort]}>{best} days</Text>
+                </View>
+              </View>
+            </ScrollView>
+          ) : null}
+        </KeyboardAvoidingView>
+
+          <View style={[styles.tabs, { backgroundColor: appTheme.ink, borderColor: appTheme.edge }]}>
+            {TABS.map(({ key, label, icon: Icon }) => {
+              const active = tab === key;
+              return (
+                <Pressable
+                  key={key}
+                  onPress={() => setTab(key)}
+                  style={[styles.tab, active && { backgroundColor: appTheme.button }]}
+                >
+                  {key === "you" ? (
+                    <View
+                      style={{
+                        width: 24,
+                        height: 24,
+                        borderRadius: 12,
+                        alignItems: "center",
+                        justifyContent: "center",
+                        backgroundColor: active ? "rgba(255,255,255,0.14)" : "transparent",
+                      }}
+                    >
+                      <ThemeIcon type={sanctuaryTheme} color={active ? appTheme.fg : appTheme.faint} size={19} />
+                    </View>
+                  ) : (
+                    <Icon active={active} />
+                  )}
+                  <Text
+                    style={[styles.tabText, { color: appTheme.faint }, active && { color: appTheme.fg }]}
+                  >
+                    {label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <Modal
+            visible={showNotificationPrompt}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setShowNotificationPrompt(false)}
+          >
+            <Pressable style={styles.modalOverlay} onPress={() => setShowNotificationPrompt(false)}>
+              <Pressable style={[styles.modalCard, themedCard]} onPress={() => {}}>
+                <Text style={[styles.kicker, themedAccent2]}>Notifications</Text>
+                <Text style={[styles.modalMessage, themedTitle]}>
+                  Want a gentle reminder to check in each day?
+                </Text>
+                <Text style={[styles.youCardMuted, themedMuted]}>
+                  Your quiet place is ready when you are.
+                </Text>
+                <View style={[styles.authButtonRow, { marginTop: 18 }]}>
+                  <Pressable
+                    style={[styles.authPrimaryButton, { backgroundColor: appTheme.button }]}
+                    onPress={async () => {
+                      const result = await requestNotificationPermission();
+                      if (result === "granted") {
+                        updateMobileNotificationSettings({
+                          dailyReminderEnabled: true,
+                          weeklyInsightEnabled: true,
+                          sanctuaryUnlockEnabled: true,
+                        });
+                      }
+                      setShowNotificationPrompt(false);
+                    }}
+                  >
+                    <Text style={[styles.authPrimaryText, themedTitle]}>Enable reminders</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.authSecondaryButton, { borderColor: appTheme.edge }]}
+                    onPress={() => {
+                      updateMobileNotificationSettings({ notificationPromptShown: true });
+                      setShowNotificationPrompt(false);
+                    }}
+                  >
+                    <Text style={[styles.authSecondaryText, themedAccent]}>Not now</Text>
+                  </Pressable>
+                </View>
+              </Pressable>
+            </Pressable>
+          </Modal>
+
+          {/* Coach reply modal */}
+          <Modal
+            visible={coachModal !== null}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setCoachModal(null)}
+          >
+            <Pressable
+              style={styles.modalOverlay}
+              onPress={() => setCoachModal(null)}
+            >
+              <Pressable
+                style={[styles.modalCard, themedCard, shortLayout && styles.modalCardShort]}
+                onPress={() => {}}
+              >
+                <Pressable
+                  style={styles.modalClose}
+                  onPress={() => setCoachModal(null)}
+                  hitSlop={12}
+                >
+                  <Text style={styles.modalCloseText}>x</Text>
+                </Pressable>
+
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 16 }}>
+                  <View
+                    style={{
+                      width: shortLayout ? 36 : 44,
+                      height: shortLayout ? 36 : 44,
+                      borderRadius: shortLayout ? 18 : 22,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      backgroundColor: appTheme.helperBg,
+                      borderWidth: 1,
+                      borderColor: appTheme.edge,
+                    }}
+                  >
+                    <ThemeIcon type={sanctuaryTheme} color={appTheme.accent} size={shortLayout ? 22 : 26} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.kicker, themedAccent2, shortLayout && styles.kickerShort]}>
+                      {displayName.trim() || "You"}
+                    </Text>
+                    <Text style={[styles.modalUserEntry, themedTitle, shortLayout && styles.modalUserEntryShort]}>
+                      "{coachModal?.text}"
+                    </Text>
+                  </View>
+                </View>
+
+                <Text style={[styles.modalMessage, themedBody, shortLayout && styles.modalMessageShort]}>
+                  <Text style={[styles.kicker, themedAccent2, shortLayout && styles.kickerShort]}>Tranqly{"\n"}</Text>
+                  {coachModal?.reply.message}
+                </Text>
+
+                <View style={[styles.nextStepBox, themedInk, shortLayout && styles.nextStepBoxShort]}>
+                  <Text style={[styles.nextStepLabel, themedAccent2, shortLayout && styles.nextStepLabelShort]}>One gentle step</Text>
+                  <Text style={[styles.nextStep, themedTitle, shortLayout && styles.nextStepShort]}>
+                    {coachModal?.reply.nextStep}
+                  </Text>
+                </View>
+                {coachModal?.reply.pattern ? (
+                  <View style={[styles.nextStepBox, themedInk, shortLayout && styles.nextStepBoxShort]}>
+                    <Text style={[styles.nextStepLabel, themedAccent2, shortLayout && styles.nextStepLabelShort]}>Pattern to watch</Text>
+                    <Text style={[styles.nextStep, themedTitle, shortLayout && styles.nextStepShort]}>
+                      {coachModal.reply.pattern}
+                    </Text>
+                  </View>
+                ) : null}
+                <View style={[styles.responseFeedbackRow, { borderColor: appTheme.edge }]}>
+                  <Text style={[styles.responseFeedbackLabel, themedMuted]}>Was this helpful?</Text>
+                  <View style={styles.responseFeedbackActions}>
+                    <Pressable style={[styles.responseFeedbackButton, themedInk]}>
+                      <Text style={[styles.responseFeedbackText, themedAccent]}>Helpful</Text>
+                    </Pressable>
+                    <Pressable style={[styles.responseFeedbackButton, themedInk]}>
+                      <Text style={[styles.responseFeedbackText, themedAccent]}>Not helpful</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              </Pressable>
+            </Pressable>
+          </Modal>
+
+          <Modal
+            visible={showSanctuaryModal}
+            transparent
+            animationType="slide"
+            onRequestClose={() => setShowSanctuaryModal(false)}
+          >
+            <View style={styles.sanctuaryModalOverlay}>
+              <View style={[styles.sanctuaryModalCard, themedCard]}>
+                <View style={styles.sanctuaryModalHeader}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.sanctuaryKicker, themedAccent2]}>Explore Sanctuary</Text>
+                    <Text style={[styles.sanctuaryModalTitle, themedTitle]}>{detailSanctuary.label}</Text>
+                    <View style={styles.sanctuaryMetaRow}>
+                      {sanctuaryTheme === detailSanctuary.key ? (
+                        <Text style={[styles.sanctuaryMetaPill, themedMuted]}>Current Sanctuary</Text>
+                      ) : null}
+                      <Text style={[styles.sanctuaryMetaPill, themedMuted]}>
+                        {themeProgressLabel(detailSanctuary, checkIns.length, premium)}
+                      </Text>
+                      <Text style={[styles.sanctuaryMetaPill, themedMuted]}>
+                        {detailSanctuaryReflectionCount} quit moment{detailSanctuaryReflectionCount === 1 ? "" : "s"} here
+                      </Text>
+                    </View>
+                    <Text style={[styles.sanctuarySubtitle, themedBody]}>
+                      {detailSanctuary.description}
+                    </Text>
+                  </View>
+                  <Pressable
+                    onPress={() => setShowSanctuaryModal(false)}
+                    style={[styles.sanctuaryCloseButton, themedInk]}
+                    hitSlop={12}
+                  >
+                    <Text style={[styles.sanctuaryCloseText, themedAccent]}>Close</Text>
+                  </Pressable>
+                </View>
+                <ScrollView showsVerticalScrollIndicator={false}>
+                  <View style={styles.sanctuaryModalArtworkFrame}>
+                    <Image source={detailSanctuary.artwork} style={styles.sanctuaryModalArtwork} resizeMode="cover" />
+                    <LinearGradient colors={["rgba(11,14,20,0)", "rgba(11,14,20,0.76)"]} style={StyleSheet.absoluteFill} />
+                    <Text style={[styles.sanctuaryArtworkText, themedTitle]}>{detailSanctuary.feeling}</Text>
+                  </View>
+
+                  <View style={styles.sanctuaryStatsRow}>
+                    <View style={styles.sanctuaryStatPill}>
+                      <Text style={styles.sanctuaryStatValue}>{detailSanctuaryReflectionCount}</Text>
+                      <Text style={styles.sanctuaryStatLabel}>Quiet moments here</Text>
+                    </View>
+                    <View style={styles.sanctuaryStatPill}>
+                      <Text style={styles.sanctuaryStatValue}>{streak}d</Text>
+                      <Text style={styles.sanctuaryStatLabel}>Streak</Text>
+                    </View>
+                    <View style={styles.sanctuaryStatPill}>
+                      <Text style={styles.sanctuaryStatValue}>{best}d</Text>
+                      <Text style={styles.sanctuaryStatLabel}>Best</Text>
+                    </View>
+                  </View>
+
+                  <View style={[styles.sanctuaryPersonalCard, { backgroundColor: appTheme.helperBg, borderColor: appTheme.edge }]}>
+                    <Text style={[styles.sanctuaryPersonalTitle, themedAccent2]}>Palette</Text>
+                    <Text style={[styles.sanctuaryInfoBody, themedBody]}>
+                      {detailSanctuary.palette.join(", ")}
+                    </Text>
+                  </View>
+
+                  {isThemeUnlocked(detailSanctuary, checkIns.length, premium) && sanctuaryTheme !== detailSanctuary.key ? (
+                    <Pressable
+                      style={[styles.themeApplyButton, { backgroundColor: appTheme.button, marginBottom: 18 }]}
+                      onPress={() => {
+                        setSanctuaryTheme(detailSanctuary.key);
+                        setDraftSanctuaryTheme(detailSanctuary.key);
+                        setShowSanctuaryModal(false);
+                      }}
+                    >
+                      <Text style={[styles.themeApplyButtonText, themedTitle]}>Select Theme</Text>
+                    </Pressable>
+                  ) : null}
+                </ScrollView>
+              </View>
+            </View>
+          </Modal>
+
+          <Modal
+            visible={showPremiumModal}
+            transparent
+            animationType="slide"
+            onRequestClose={() => setShowPremiumModal(false)}
+          >
+            <Pressable
+              style={styles.modalOverlay}
+              onPress={() => setShowPremiumModal(false)}
+            >
+              <Pressable
+                style={[styles.premiumModalCard, themedCard, shortLayout && styles.modalCardShort]}
+                onPress={() => {}}
+              >
+                <View style={styles.modalHandle} />
+                <View style={[styles.premiumLotusIcon, { borderColor: appTheme.accent, backgroundColor: appTheme.helperBg }]}>
+                  <ThemeIcon type="blossom" color={appTheme.accent2} size={28} />
+                </View>
+                <Text style={[styles.premiumModalTitle, themedTitle]}>
+                  Tranqly Plus
+                </Text>
+                <Text style={[styles.premiumModalBody, themedBody]}>
+                  Go deeper with every reflection.
+                  {"\n\n"}
+                  Premium unlocks unlimited reflections, weekly pattern summaries, premium sanctuary themes, and more personal guidance over time.
+                </Text>
+                {[
+                  "Unlimited reflections & insights",
+                  "Weekly pattern summaries",
+                  "Premium sanctuary themes",
+                  "More personalized guidance over time",
+                ].map((item) => (
+                  <View key={item} style={styles.premiumPerkRow}>
+                    <View style={[styles.premiumPerkIcon, { borderColor: appTheme.helperEdge }]}>
+                      <Text style={[styles.premiumPerkIconText, themedAccent]}>+</Text>
+                    </View>
+                    <Text style={styles.premiumPerkText}>{item}</Text>
+                  </View>
+                ))}
+                <Pressable
+                  onPress={startCheckout}
+                  disabled={checkoutBusy}
+                  style={styles.premiumUpgradeButton}
+                >
+                  <LinearGradient
+                    colors={[appTheme.button, appTheme.button]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={styles.premiumUpgradeGradient}
+                  >
+                    <Text style={[styles.premiumUpgradeText, themedTitle]}>
+                      {checkoutBusy ? "Opening checkout..." : "Start Plus \u2022 $5.99/mo"}
+                    </Text>
+                  </LinearGradient>
+                </Pressable>
+                <Text style={[styles.premiumPriceNote, themedMuted]}>Yearly option: $59.99/year</Text>
+                <Pressable
+                  onPress={() => setShowPremiumModal(false)}
+                  style={styles.premiumCloseButton}
+                >
+                  <Text style={[styles.premiumCloseText, themedMuted]}>Not today, and that's okay</Text>
+                </Pressable>
+              </Pressable>
+            </Pressable>
+          </Modal>
+      </SafeAreaView>
+    </SafeAreaProvider>
+  );
+
+  async function toggleRecord() {
+    if (recording) {
+      await stopRecording(recording);
+    } else {
+      try {
+        const perm = await Audio.requestPermissionsAsync();
+        if (!perm.granted) {
+          Alert.alert("Permission needed", "Microphone access is required to record voice notes.");
+          return;
+        }
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: true,
+          playsInSilentModeIOS: true,
+        });
+        const { recording } = await Audio.Recording.createAsync(
+          Audio.RecordingOptionsPresets.HIGH_QUALITY
+        );
+        recordingStoppingRef.current = false;
+        setRecording(recording);
+      } catch {
+        Alert.alert("Recording error", "Could not start recording.");
+      }
+    }
+  }
+
+  async function stopRecording(activeRecording: Audio.Recording) {
+    if (recordingStoppingRef.current) return;
+    recordingStoppingRef.current = true;
+    try {
+      await activeRecording.stopAndUnloadAsync();
+      const uri = activeRecording.getURI();
+      setRecording(null);
+      if (!uri) return;
+      await transcribeAudio(uri);
+    } catch {
+      setRecording(null);
+      Alert.alert("Recording error", "Could not stop recording.");
+    }
+  }
+
+  async function transcribeAudio(uri: string, retries = 2): Promise<void> {
+    if (!API_BASE_URL) {
+      Alert.alert(
+        "Server not configured",
+        "Set EXPO_PUBLIC_API_BASE_URL to your Tranqly web server URL, then restart Expo."
+      );
+      return;
+    }
+    setComposerError("");
+    setTranscribing(true);
+    const startedAt = Date.now();
+    let lastError = "Could not transcribe audio.";
+    let lastStatus: number | undefined;
+    let lastRequestId: string | undefined;
+
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const formData = new FormData();
+        formData.append("audio", {
+          uri,
+          type: "audio/m4a",
+          name: "recording.m4a",
+        } as any);
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), TRANSCRIBE_TIMEOUT_MS);
+        if (__DEV__) {
+          console.info("Posting transcription request to", `${API_BASE_URL}/api/transcribe`, {
+            attempt: attempt + 1,
+            uri,
+          });
+        }
+        const res = await fetch(`${API_BASE_URL}/api/transcribe`, {
+          method: "POST",
+          signal: controller.signal,
+          body: formData,
+        });
+        clearTimeout(timeout);
+        lastStatus = res.status;
+        if (__DEV__) {
+          console.info("Transcription response status", res.status);
+        }
+        if (res.ok) {
+          const data = await res.json();
+          lastRequestId = typeof data.requestId === "string" ? data.requestId : lastRequestId;
+          if (__DEV__) {
+            console.info("Transcription response payload", {
+              requestId: data.requestId,
+              hasText: Boolean(data.text),
+              chars: typeof data.text === "string" ? data.text.length : 0,
+            });
+          }
+          if (data.text) {
+            setText((prev) => (prev ? `${prev} ${data.text}` : data.text));
+            setReflectionSource("voice");
+            setShowTranscriptPreview(true);
+            setCaptured(true);
+            setTimeout(() => setCaptured(false), 500);
+          }
+          setTranscribing(false);
+          return;
+        }
+        try {
+          const data = await res.json();
+          lastRequestId = typeof data.requestId === "string" ? data.requestId : lastRequestId;
+          lastError = data.error || lastError;
+          if (__DEV__) {
+            console.warn("Transcription API error payload", data);
+          }
+        } catch {
+          lastError = `Transcription failed with status ${res.status}.`;
+        }
+      } catch (err) {
+        if (__DEV__) {
+          console.warn("Transcription request failed", err);
+        }
+        lastError =
+          err instanceof Error && err.name === "AbortError"
+            ? "The request did not finish. Check that your phone can reach the Tranqly web server."
+            : err instanceof Error
+              ? err.message
+              : lastError;
+      }
+      if (attempt < retries) await new Promise((r) => setTimeout(r, 1500));
+    }
+    setTranscribing(false);
+    setComposerError("Transcription failed. Try the mic again or type instead.");
+    setTimeout(() => setComposerError(""), 5000);
+    logMobileApiError({
+      requestId: lastRequestId,
+      errorCode: "mobile_transcription_failed",
+      errorMessage: lastError,
+      featureArea: "transcription",
+      statusCode: lastStatus,
+      durationMs: Date.now() - startedAt,
+      route: "/api/transcribe",
+      metadata: {
+        attempts: retries + 1,
+        hasApiBaseUrl: Boolean(API_BASE_URL),
+      },
+    });
+    Alert.alert("Transcription failed", lastError);
+  }
+
+}
+
+const styles = StyleSheet.create({
+  appRoot: {
+    flex: 1,
+    backgroundColor: "#0B0E14",
+  },
+  adminRoot: {
+    flex: 1,
+    backgroundColor: "#070B12",
+  },
+  adminContent: {
+    padding: 20,
+    paddingBottom: 44,
+    gap: 18,
+  },
+  adminHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  adminEyebrow: {
+    color: "#6BE7D8",
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 1.7,
+    textTransform: "uppercase",
+  },
+  adminTitle: {
+    color: "#F6F2EA",
+    fontSize: 30,
+    fontWeight: "900",
+    letterSpacing: -0.8,
+    marginTop: 6,
+  },
+  adminSubtitle: {
+    color: "#A7B0C5",
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 6,
+    maxWidth: 620,
+  },
+  adminBackButton: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(167,139,250,0.35)",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: "rgba(17,24,39,0.78)",
+  },
+  adminBackText: {
+    color: "#EDE7D9",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  adminSceneList: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  adminSceneChip: {
+    minWidth: 150,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(148,163,184,0.2)",
+    backgroundColor: "rgba(17,24,39,0.72)",
+    padding: 14,
+  },
+  adminSceneChipActive: {
+    borderColor: "#B894FF",
+    backgroundColor: "rgba(167,139,250,0.14)",
+  },
+  adminSceneChipTitle: {
+    color: "#F6F2EA",
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  adminSceneChipStatus: {
+    color: "#6BE7D8",
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 1.1,
+    marginTop: 6,
+    textTransform: "uppercase",
+  },
+  adminGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 16,
+    alignItems: "flex-start",
+  },
+  adminPanel: {
+    flexGrow: 1,
+    flexBasis: 360,
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: "rgba(148,163,184,0.2)",
+    backgroundColor: "rgba(13,20,33,0.9)",
+    padding: 18,
+    gap: 12,
+  },
+  adminPanelTitle: {
+    color: "#F6F2EA",
+    fontSize: 20,
+    fontWeight: "900",
+    letterSpacing: -0.3,
+  },
+  adminLabel: {
+    color: "#A7B0C5",
+    fontSize: 12,
+    fontWeight: "900",
+    letterSpacing: 1.1,
+    textTransform: "uppercase",
+  },
+  adminInput: {
+    minHeight: 48,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(148,163,184,0.22)",
+    backgroundColor: "rgba(5,10,18,0.72)",
+    color: "#F6F2EA",
+    paddingHorizontal: 14,
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  adminRuleRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  adminRuleChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(148,163,184,0.22)",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: "rgba(5,10,18,0.6)",
+  },
+  adminRuleChipActive: {
+    borderColor: "#6BE7D8",
+    backgroundColor: "rgba(107,231,216,0.12)",
+  },
+  adminRuleChipText: {
+    color: "#D7DEEA",
+    fontSize: 11,
+    fontWeight: "800",
+    textTransform: "capitalize",
+  },
+  adminErrors: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(248,113,113,0.35)",
+    backgroundColor: "rgba(127,29,29,0.24)",
+    padding: 12,
+    gap: 4,
+  },
+  adminErrorText: {
+    color: "#FECACA",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  adminActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    marginTop: 4,
+  },
+  adminActionButton: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(148,163,184,0.24)",
+    backgroundColor: "rgba(17,24,39,0.82)",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  adminActionPrimary: {
+    borderColor: "#6BE7D8",
+    backgroundColor: "#6BE7D8",
+  },
+  adminActionText: {
+    color: "#EDE7D9",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  adminActionPrimaryText: {
+    color: "#061015",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  adminDeviceRow: {
+    gap: 8,
+    paddingVertical: 2,
+  },
+  adminDeviceChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(148,163,184,0.22)",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: "rgba(5,10,18,0.62)",
+  },
+  adminDeviceChipActive: {
+    borderColor: "#B894FF",
+    backgroundColor: "rgba(167,139,250,0.18)",
+  },
+  adminDeviceText: {
+    color: "#EDE7D9",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  adminPreviewWrap: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingTop: 8,
+  },
+  adminPreviewFrame: {
+    overflow: "hidden",
+    borderRadius: 34,
+    borderWidth: 1,
+    borderColor: "rgba(167,139,250,0.32)",
+    backgroundColor: "#080D16",
+  },
+  adminPreviewHeader: {
+    minHeight: 50,
+    paddingHorizontal: 18,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(148,163,184,0.16)",
+  },
+  adminPreviewTitle: {
+    color: "#F6F2EA",
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  adminPreviewStatus: {
+    color: "#6BE7D8",
+    fontSize: 11,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  adminPreviewContent: {
+    padding: 18,
+    paddingBottom: 32,
+  },
+  adminPreviewHeading: {
+    color: "#F6F2EA",
+    fontSize: 27,
+    fontWeight: "900",
+    letterSpacing: -0.7,
+  },
+  adminPreviewSubcopy: {
+    color: "#A7B0C5",
+    fontSize: 14,
+    marginTop: 4,
+    marginBottom: 12,
+  },
+  fitCoachScroll: {
+    flex: 1,
+  },
+  fitCoachShell: {
+    flexGrow: 1,
+    paddingTop: 6,
+    paddingBottom: 104,
+  },
+  fitHeader: {
+    minHeight: 34,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 6,
+  },
+  fitBrandRow: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  fitBrandLogo: {
+    width: 30,
+    height: 30,
+  },
+  fitBrand: {
+    color: "#F2F4F8",
+    fontSize: 14,
+    fontWeight: "900",
+    letterSpacing: -0.5,
+    flexShrink: 1,
+  },
+  fitBrandShort: {
+    fontSize: 13,
+  },
+  fitStreak: {
+    color: "#7E8B9D",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  fitHero: {
+    marginBottom: 6,
+  },
+  fitEyebrow: {
+    color: "#9AA3B5",
+    fontSize: 13,
+    fontWeight: "700",
+    marginBottom: 2,
+  },
+  fitEyebrowShort: {
+    fontSize: 12,
+  },
+  fitTitle: {
+    color: "#F2F4F8",
+    fontSize: 28,
+    lineHeight: 32,
+    fontWeight: "900",
+    letterSpacing: -0.8,
+  },
+  fitTitleShort: {
+    fontSize: 24,
+    lineHeight: 28,
+  },
+  fitAccent: {
+    color: "#D8C4FF",
+  },
+  fitTagline: {
+    color: "#B894FF",
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 1.1,
+    textTransform: "uppercase",
+    marginBottom: 2,
+  },
+  fitSubline: {
+    color: "#9AA3B5",
+    fontSize: 12,
+    lineHeight: 16,
+    marginTop: 2,
+  },
+  fitDiscoveryLine: {
+    color: "#D8C4FF",
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "800",
+    marginTop: 2,
+  },
+  growthNoticeCard: {
+    borderWidth: 1,
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    marginBottom: 8,
+  },
+  growthNoticeText: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "800",
+  },
+  fitDailyCard: {
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "rgba(167,139,250,0.26)",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginBottom: 8,
+  },
+  fitDailyCardShort: {
+    paddingVertical: 8,
+    marginBottom: 6,
+  },
+  fitKicker: {
+    color: "#D8C4FF",
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 1.2,
+    textTransform: "uppercase",
+    marginBottom: 4,
+  },
+  fitPromptBlock: {
+    alignItems: "center",
+    marginBottom: 6,
+  },
+  fitPromptText: {
+    color: "#F2F4F8",
+    fontSize: 20,
+    lineHeight: 24,
+    fontWeight: "900",
+    textAlign: "center",
+    paddingHorizontal: 8,
+  },
+  anotherPromptButton: {
+    marginTop: 4,
+    minHeight: 30,
+    justifyContent: "center",
+    alignItems: "center",
+    alignSelf: "center",
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(184,148,255,0.22)",
+    backgroundColor: "rgba(184,148,255,0.10)",
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+  },
+  anotherPromptText: {
+    color: "#D8C4FF",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  promptReasonText: {
+    color: "#7E8B9D",
+    fontSize: 12,
+    lineHeight: 16,
+    textAlign: "center",
+    marginTop: 4,
+    paddingHorizontal: 14,
+  },
+  patternObservationRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  patternObservationCheck: {
+    fontSize: 13,
+    fontWeight: "900",
+    marginTop: 1,
+  },
+  fitTranscriptCard: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(94,234,212,0.25)",
+    backgroundColor: "rgba(94,234,212,0.10)",
+    padding: 12,
+    marginBottom: 10,
+  },
+  fitTranscriptText: {
+    color: "#D4D8E0",
+    fontSize: 13,
+    lineHeight: 18,
+    fontStyle: "italic",
+    marginTop: 2,
+  },
+  fitPatternBox: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(94,234,212,0.25)",
+    backgroundColor: "rgba(94,234,212,0.10)",
+    padding: 12,
+    marginTop: 12,
+  },
+  responseFeedbackRow: {
+    borderTopWidth: 1,
+    marginTop: 14,
+    paddingTop: 12,
+    gap: 8,
+  },
+  responseFeedbackLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  responseFeedbackActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  responseFeedbackButton: {
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  responseFeedbackText: {
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  fitCardText: {
+    color: "#DDE7E5",
+    fontSize: 14,
+    lineHeight: 19,
+  },
+  fitCardTextShort: {
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  fitComposer: {
+    borderRadius: 22,
+    backgroundColor: "#141826",
+    borderWidth: 1,
+    borderColor: "#242B3D",
+    padding: 9,
+    marginBottom: 6,
+  },
+  fitComposerShort: {
+    padding: 8,
+    marginBottom: 6,
+  },
+  fitMicWrap: {
+    minHeight: 154,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 4,
+  },
+  fitMicWrapShort: {
+    minHeight: 136,
+  },
+  fitMicPulseWrap: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  fitMicPulse: {
+    position: "absolute",
+    width: 102,
+    height: 102,
+    borderRadius: 51,
+  },
+  fitMicPulseShort: {
+    width: 92,
+    height: 92,
+    borderRadius: 46,
+  },
+  fitMicButton: {
+    width: 95,
+    height: 95,
+    borderRadius: 48,
+    backgroundColor: "#0B0E14",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#B894FF",
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.6,
+    shadowRadius: 24,
+    elevation: 10,
+  },
+  fitMicButtonShort: {
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+  },
+  fitMicButtonRecording: {
+    backgroundColor: "rgba(167,139,250,0.18)",
+    borderColor: "#B894FF",
+  },
+  fitMicLoading: {
+    color: "#D8C4FF",
+    fontSize: 22,
+    fontWeight: "900",
+  },
+  waveformRow: {
+    minHeight: 58,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+  },
+  waveformBar: {
+    width: 6,
+    borderRadius: 999,
+    backgroundColor: "#D8C4FF",
+  },
+  fitVoiceHint: {
+    color: "#5B6478",
+    fontSize: 12,
+    fontWeight: "700",
+    marginTop: 6,
+    textAlign: "center",
+  },
+  fitVoiceHintShort: {
+    fontSize: 11,
+    marginTop: 8,
+  },
+  fitStatusCard: {
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    marginBottom: 10,
+  },
+  fitStatusText: {
+    fontSize: 12,
+    fontWeight: "800",
+    textAlign: "center",
+  },
+  fitStatusTextShort: {
+    fontSize: 11,
+  },
+  fitInput: {
+    minHeight: 96,
+    borderRadius: 18,
+    backgroundColor: "#0B0E14",
+    borderWidth: 1,
+    borderColor: "#263142",
+    color: "#F2F4F8",
+    fontSize: 15,
+    lineHeight: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    textAlignVertical: "top",
+  },
+  fitInputShort: {
+    minHeight: 82,
+    fontSize: 13,
+    lineHeight: 18,
+    paddingVertical: 9,
+  },
+  fitBasedCard: {
+    borderRadius: 20,
+    backgroundColor: "#132A2B",
+    borderWidth: 1,
+    borderColor: "#245257",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    marginBottom: 6,
+  },
+  fitBasedCardShort: {
+    paddingVertical: 8,
+    marginBottom: 6,
+  },
+  fitShareButton: {
+    borderRadius: 22,
+    overflow: "hidden",
+  },
+  fitShareGradient: {
+    minHeight: 46,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 22,
+  },
+  fitShareGradientShort: {
+    minHeight: 40,
+  },
+  fitSubmittedCard: {
+    borderRadius: 22,
+    backgroundColor: "#141826",
+    borderWidth: 1,
+    borderColor: "#242B3D",
+    padding: 11,
+    marginBottom: 6,
+  },
+  fitSubmittedCardShort: {
+    padding: 10,
+    marginBottom: 6,
+  },
+  fitSubmittedTitle: {
+    color: "#F2F4F8",
+    fontSize: 22,
+    fontWeight: "900",
+    letterSpacing: -0.6,
+    marginBottom: 8,
+  },
+  fitSubmittedTitleShort: {
+    fontSize: 18,
+    marginBottom: 6,
+  },
+  fitSubmittedBody: {
+    color: "#D4D8E0",
+    fontSize: 14,
+    lineHeight: 20,
+    maxHeight: 40,
+  },
+  fitSubmittedBodyShort: {
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  fitSubmittedActions: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 12,
+  },
+  fitFollowUpComposer: {
+    marginTop: 22,
+    gap: 8,
+  },
+  fitFollowUpComposerShort: {
+    marginTop: 14,
+    gap: 6,
+  },
+  fitFollowUpStack: {
+    alignItems: "center",
+    gap: 10,
+  },
+  fitFollowUpMic: {
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#0B0E14",
+    shadowColor: "#B894FF",
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.6,
+    shadowRadius: 24,
+    elevation: 10,
+  },
+  fitFollowUpPulse: {
+    position: "absolute",
+    width: 92,
+    height: 92,
+    borderRadius: 46,
+  },
+  fitFollowUpHint: {
+    color: "#5B6478",
+    fontSize: 11,
+    fontWeight: "700",
+    textAlign: "center",
+  },
+  voiceLimitWrap: {
+    width: "64%",
+    maxWidth: 220,
+    minWidth: 150,
+    alignSelf: "center",
+    marginTop: 8,
+  },
+  voiceLimitTrack: {
+    height: 6,
+    borderRadius: 999,
+    overflow: "hidden",
+  },
+  voiceLimitFill: {
+    height: "100%",
+    borderRadius: 999,
+  },
+  voiceLimitText: {
+    marginTop: 4,
+    fontSize: 10,
+    fontWeight: "800",
+    textAlign: "center",
+  },
+  fitFollowUpInput: {
+    width: "100%",
+    minHeight: 86,
+    borderRadius: 18,
+    backgroundColor: "#0B0E14",
+    borderWidth: 1,
+    borderColor: "#263142",
+    color: "#F2F4F8",
+    fontSize: 13,
+    lineHeight: 18,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    textAlignVertical: "top",
+  },
+  fitFollowUpInputShort: {
+    minHeight: 78,
+    paddingVertical: 9,
+  },
+  fitFollowUpShare: {
+    minHeight: 40,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 16,
+  },
+  fitSecondaryButton: {
+    flex: 1,
+    minHeight: 42,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#0B0E14",
+    borderWidth: 1,
+    borderColor: "#263142",
+  },
+  fitSecondaryButtonText: {
+    color: "#F2F4F8",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  fitWeeklyPreview: {
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: "rgba(167,139,250,0.32)",
+    backgroundColor: "#171430",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  fitWeeklyPreviewShort: {
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  fitWeeklyHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 6,
+  },
+  fitWeeklyCount: {
+    color: "#D8C4FF",
+    fontSize: 10,
+    fontWeight: "900",
+  },
+  fitWeeklyProgress: {
+    flexDirection: "row",
+    gap: 5,
+    marginBottom: 6,
+  },
+  fitWeeklyProgressSegment: {
+    flex: 1,
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: "rgba(11,14,20,0.85)",
+  },
+  fitWeeklyProgressSegmentActive: {
+    backgroundColor: "#D8C4FF",
+  },
+  fitWeeklyProgressText: {
+    color: "#F2F4F8",
+    fontSize: 13,
+    fontWeight: "900",
+    marginBottom: 0,
+  },
+  fitWeeklyButton: {
+    minHeight: 48,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#D8C4FF",
+    marginTop: 12,
+  },
+  fitWeeklyButtonText: {
+    color: "#081014",
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  flex: {
+    flex: 1,
+    backgroundColor: "#0B0E14",
+  },
+  shell: {
+    flex: 1,
+    backgroundColor: "#0B0E14",
+    paddingHorizontal: 16,
+  },
+  header: {
+    paddingTop: 10,
+    paddingBottom: 14,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  headerShort: {
+    paddingTop: 6,
+    paddingBottom: 8,
+  },
+  brand: {
+    color: "#F2F4F8",
+    fontSize: 22,
+    fontWeight: "800",
+    letterSpacing: -1,
+  },
+  brandShort: {
+    fontSize: 18,
+  },
+  subtle: {
+    color: "#7E8B9D",
+    fontSize: 13,
+  },
+  inputSection: {
+    paddingTop: 12,
+    paddingBottom: 8,
+    zIndex: 10,
+  },
+  inputSectionShort: {
+    paddingTop: 8,
+    paddingBottom: 4,
+  },
+  greeting: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 10,
+  },
+  greetingShort: {
+    marginBottom: 6,
+    gap: 8,
+  },
+  greetingName: {
+    color: "#F2F4F8",
+    fontSize: 18,
+    fontWeight: "800",
+    letterSpacing: -0.5,
+  },
+  greetingNameShort: {
+    fontSize: 15,
+  },
+  greetingBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#151A24",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#263142",
+  },
+  greetingBadgeShort: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  greetingEmoji: {
+    fontSize: 14,
+  },
+  greetingEmojiShort: {
+    fontSize: 12,
+  },
+  greetingSub: {
+    color: "#7E8B9D",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  greetingSubShort: {
+    fontSize: 10,
+  },
+  inputRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    marginBottom: 12,
+  },
+  inputRowShort: {
+    gap: 8,
+    marginBottom: 8,
+  },
+  micButton: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: "#151A24",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: "#263142",
+    flexShrink: 0,
+  },
+  micButtonShort: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+  },
+  micPressed: {
+    backgroundColor: "#1E2938",
+    borderColor: "#B894FF",
+  },
+  micDisabled: {
+    opacity: 0.4,
+  },
+  recordingIndicator: {
+    alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
+    height: "100%",
+  },
+  recordingRing: {
+    position: "absolute",
+    borderRadius: 999,
+    borderWidth: 1.5,
+    borderColor: "#B894FF",
+    opacity: 0.4,
+  },
+  micIcon: {
+    fontSize: 36,
+  },
+  micIconShort: {
+    fontSize: 30,
+  },
+  textInputWrap: {
+    flex: 1,
+    minHeight: 100,
+    justifyContent: "center",
+  },
+  textInputWrapShort: {
+    minHeight: 84,
+  },
+  input: {
+    backgroundColor: "#151A24",
+    color: "#F2F4F8",
+    fontSize: 15,
+    lineHeight: 21,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: "#263142",
+    minHeight: 100,
+    textAlignVertical: "top",
+  },
+  inputShort: {
+    fontSize: 13,
+    lineHeight: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    minHeight: 84,
+    borderRadius: 20,
+  },
+  shareButton: {
+    marginBottom: 12,
+    borderRadius: 32,
+    overflow: "hidden",
+  },
+  shareButtonShort: {
+    marginBottom: 8,
+  },
+  disabled: {
+    opacity: 1,
+  },
+  disabledButtonText: {
+    color: "#D4D8E0",
+  },
+  shareGradient: {
+    paddingVertical: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 32,
+  },
+  shareText: {
+    color: "#081014",
+    fontSize: 18,
+    fontWeight: "800",
+  },
+  shareTextShort: {
+    fontSize: 15,
+  },
+  coachShell: {
+    flex: 1,
+  },
+  coachFeed: {
+    flex: 1,
+  },
+  coachFeedContent: {
+    paddingBottom: 100,
+  },
+  userBubble: {
+    alignSelf: "flex-end",
+    marginLeft: 32,
+    borderRadius: 20,
+    borderBottomRightRadius: 6,
+    backgroundColor: "rgba(167,139,250,0.25)",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  userBubbleShort: {
+    marginLeft: 24,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 16,
+  },
+  userBubbleText: {
+    color: "#F2F4F8",
+    fontSize: 15,
+    lineHeight: 21,
+  },
+  userBubbleTextShort: {
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  typingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginLeft: 16,
+    marginTop: 8,
+  },
+  typingDot: {
+    color: "#B894FF",
+    fontSize: 8,
+  },
+  emptyPrompt: {
+    color: "#5B6478",
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: "center",
+    paddingHorizontal: 16,
+    paddingTop: 24,
+  },
+  emptyPromptShort: {
+    fontSize: 12,
+    lineHeight: 17,
+    paddingTop: 16,
+  },
+  moodChip: {
+    alignSelf: "flex-start",
+    backgroundColor: "#151A24",
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#263142",
+    marginBottom: 8,
+  },
+  moodChipShort: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    marginBottom: 6,
+  },
+  moodChipText: {
+    color: "#F2F4F8",
+    fontWeight: "700",
+    fontSize: 13,
+  },
+  moodChipTextShort: {
+    fontSize: 11,
+  },
+  deepCard: {
+    backgroundColor: "#151A24",
+    borderRadius: 24,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: "#263142",
+    marginBottom: 12,
+  },
+  deepCardShort: {
+    padding: 16,
+    borderRadius: 20,
+    marginBottom: 10,
+  },
+  deepHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 10,
+  },
+  deepBadge: {
+    color: "#B894FF",
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+  },
+  deepPremium: {
+    color: "#FBBF24",
+    fontSize: 9,
+    fontWeight: "800",
+    backgroundColor: "#2A1F1F",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    overflow: "hidden",
+  },
+  deepHeadline: {
+    color: "#F2F4F8",
+    fontSize: 18,
+    fontWeight: "700",
+    marginBottom: 8,
+    lineHeight: 24,
+  },
+  deepHeadlineShort: {
+    fontSize: 15,
+    lineHeight: 20,
+    marginBottom: 6,
+  },
+  deepBody: {
+    color: "#B0B8C8",
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 12,
+  },
+  deepBodyShort: {
+    fontSize: 12,
+    lineHeight: 17,
+    marginBottom: 10,
+  },
+  deepSuggestionBox: {
+    backgroundColor: "#1E2938",
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 12,
+  },
+  deepSuggestionBoxShort: {
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 10,
+  },
+  deepSuggestionText: {
+    color: "#D4D8E0",
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  deepSuggestionTextShort: {
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  deepAffirmation: {
+    color: "#E8D5B7",
+    fontSize: 13,
+    fontStyle: "italic",
+    textAlign: "center",
+    lineHeight: 18,
+  },
+  deepAffirmationShort: {
+    fontSize: 11,
+    lineHeight: 15,
+  },
+  journeyContent: {
+    paddingBottom: 130,
+    paddingTop: 26,
+  },
+  journeyHeader: {
+    marginBottom: 18,
+  },
+  monthCard: {
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: "#253247",
+    backgroundColor: "rgba(16,23,35,0.82)",
+    padding: 14,
+    marginBottom: 14,
+  },
+  monthKicker: {
+    color: "#D8C4FF",
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 1.6,
+    textTransform: "uppercase",
+    marginBottom: 10,
+  },
+  monthGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 7,
+  },
+  monthTile: {
+    width: "48.9%",
+    minHeight: 116,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#263142",
+    backgroundColor: "rgba(11,14,20,0.58)",
+    paddingHorizontal: 6,
+    paddingVertical: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  monthIconWrap: {
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 7,
+  },
+  monthLabel: {
+    color: "#A9B3C3",
+    fontSize: 10,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    marginBottom: 4,
+    textAlign: "center",
+  },
+  monthValue: {
+    color: "#F2F4F8",
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  sanctuaryCard: {
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: "#253247",
+    backgroundColor: "rgba(16,23,35,0.86)",
+    padding: 14,
+    marginBottom: 14,
+  },
+  sanctuaryCardHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+    marginBottom: 8,
+  },
+  sanctuaryKicker: {
+    color: "#D8C4FF",
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 1.5,
+    textTransform: "uppercase",
+  },
+  sanctuaryTitle: {
+    color: "#F2F4F8",
+    fontSize: 28,
+    fontWeight: "900",
+    letterSpacing: -1.1,
+    marginTop: 4,
+  },
+  sanctuarySubtitle: {
+    color: "#A9B3C3",
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 3,
+  },
+  sanctuaryTopButton: {
+    minHeight: 44,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#2B3850",
+    backgroundColor: "rgba(11,14,20,0.54)",
+    paddingHorizontal: 13,
+    paddingVertical: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  sanctuaryTopButtonText: {
+    color: "#B58BFF",
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  sanctuaryScene: {
+    borderRadius: 22,
+    overflow: "hidden",
+    borderWidth: 0,
+    backgroundColor: "#071018",
+    marginBottom: 12,
+    alignSelf: "center",
+  },
+  sanctuaryResponsiveWrap: {
+    width: "100%",
+    alignItems: "center",
+  },
+  sanctuaryLandscape: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 4,
+  },
+  sanctuaryAsset: {
+    position: "absolute",
+  },
+  sanctuaryLayer: {
+    position: "absolute",
+  },
+  sanctuaryLanternGlow: {
+    position: "absolute",
+    width: "14%",
+    height: "14%",
+    borderRadius: 999,
+    backgroundColor: "rgba(245, 189, 109, 0.38)",
+    shadowColor: "#F5BD6D",
+    shadowOpacity: 0.85,
+    shadowRadius: 18,
+  },
+  sanctuaryCloudLeft: {
+    left: "2%",
+    top: "23%",
+    width: "18%",
+    height: "18%",
+    opacity: 0.72,
+  },
+  sanctuaryCloudRight: {
+    right: "3%",
+    top: "11%",
+    width: "19%",
+    height: "19%",
+    opacity: 0.58,
+  },
+  sanctuaryGroundAsset: {
+    left: "4%",
+    right: "4%",
+    bottom: "-5%",
+    width: "92%",
+    height: "70%",
+  },
+  sanctuarySeedAsset: {
+    left: "42%",
+    top: "50%",
+    width: "18%",
+    height: "25%",
+  },
+  sanctuaryTreeAsset: {
+    left: "28%",
+    top: "10%",
+    width: "38%",
+    height: "55%",
+  },
+  sanctuaryPondAsset: {
+    left: "34%",
+    bottom: "8%",
+    width: "33%",
+    height: "31%",
+  },
+  sanctuaryRocksAsset: {
+    left: "18%",
+    bottom: "5%",
+    width: "26%",
+    height: "28%",
+  },
+  sanctuaryBushAsset: {
+    left: "8%",
+    bottom: "12%",
+    width: "28%",
+    height: "31%",
+  },
+  sanctuaryFlowerAsset: {
+    left: "2%",
+    bottom: "9%",
+    width: "30%",
+    height: "34%",
+  },
+  sanctuaryCabinAsset: {
+    right: "3%",
+    bottom: "10%",
+    width: "33%",
+    height: "42%",
+  },
+  sanctuaryLanternAsset: {
+    right: "28%",
+    bottom: "13%",
+    width: "16%",
+    height: "24%",
+  },
+  sanctuaryBirdAsset: {
+    right: "24%",
+    top: "21%",
+    width: "17%",
+    height: "15%",
+    opacity: 0.92,
+  },
+  sanctuaryButterflyAsset: {
+    left: "13%",
+    top: "47%",
+    width: "15%",
+    height: "18%",
+  },
+  fireflyDot: {
+    position: "absolute",
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "#F5D56D",
+    shadowColor: "#F5D56D",
+    shadowOpacity: 0.9,
+    shadowRadius: 8,
+  },
+  sanctuaryProgressBox: {
+    marginTop: 4,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#263142",
+    backgroundColor: "rgba(11,14,20,0.58)",
+    paddingHorizontal: 10,
+    paddingVertical: 12,
+    alignItems: "center",
+    flexDirection: "row",
+  },
+  sanctuaryProgressText: {
+    color: "#A9B3C3",
+    fontSize: 11,
+    lineHeight: 14,
+  },
+  sanctuaryMetaRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  sanctuaryMetaPill: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#263142",
+    backgroundColor: "rgba(11,14,20,0.55)",
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  sanctuaryDays: {
+    color: "#D8C4FF",
+    fontSize: 25,
+    fontWeight: "900",
+    lineHeight: 28,
+    minWidth: 48,
+  },
+  sanctuaryStatBlock: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    minWidth: 0,
+  },
+  sanctuaryStatCopy: {
+    flex: 1,
+    minWidth: 0,
+    alignItems: "flex-start",
+  },
+  sanctuaryStatIcon: {
+    fontSize: 18,
+  },
+  sanctuaryDivider: {
+    width: 1,
+    height: 48,
+    backgroundColor: "#263142",
+    marginHorizontal: 6,
+  },
+  sanctuaryUnlockBlock: {
+    flex: 1.25,
+    minWidth: 0,
+  },
+  sanctuaryUnlockName: {
+    color: "#F2F4F8",
+    fontSize: 15,
+    fontWeight: "900",
+    lineHeight: 18,
+  },
+  sanctuaryNext: {
+    color: "#D8C4FF",
+    fontSize: 12,
+    fontWeight: "800",
+    marginTop: 1,
+  },
+  sanctuaryButton: {
+    minHeight: 46,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(94,234,212,0.35)",
+    backgroundColor: "#0B0E14",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 12,
+  },
+  sanctuaryButtonText: {
+    color: "#D8C4FF",
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  sanctuaryModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.74)",
+    justifyContent: "flex-end",
+  },
+  sanctuaryModalCard: {
+    maxHeight: "92%",
+    backgroundColor: "#151A24",
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+    borderWidth: 1,
+    borderColor: "#263142",
+    padding: 18,
+  },
+  sanctuaryModalHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    marginBottom: 14,
+  },
+  sanctuaryModalTitle: {
+    color: "#F2F4F8",
+    fontSize: 28,
+    fontWeight: "900",
+    letterSpacing: -0.8,
+    marginTop: 4,
+  },
+  sanctuaryCloseButton: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#263142",
+    backgroundColor: "#0B0E14",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  sanctuaryCloseText: {
+    color: "#A9B3C3",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  sanctuaryStatsRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 12,
+  },
+  sanctuaryStatPill: {
+    flex: 1,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "#263142",
+    backgroundColor: "rgba(11,14,20,0.65)",
+    padding: 12,
+    alignItems: "center",
+  },
+  sanctuaryStatValue: {
+    color: "#F2F4F8",
+    fontSize: 20,
+    fontWeight: "900",
+  },
+  sanctuaryStatLabel: {
+    color: "#7E8B9D",
+    fontSize: 10,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    marginTop: 2,
+  },
+  sanctuaryInfoCard: {
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#263142",
+    backgroundColor: "rgba(11,14,20,0.65)",
+    padding: 14,
+    marginTop: 12,
+  },
+  sanctuaryInfoTitle: {
+    color: "#F2F4F8",
+    fontSize: 14,
+    fontWeight: "900",
+    marginBottom: 6,
+  },
+  sanctuaryInfoBody: {
+    color: "#A9B3C3",
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  sanctuaryInfoAccent: {
+    color: "#D8C4FF",
+    fontSize: 13,
+    fontWeight: "900",
+    lineHeight: 19,
+    marginTop: 8,
+  },
+  sanctuaryElementRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#263142",
+    backgroundColor: "#151A24",
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    marginTop: 7,
+  },
+  sanctuaryElementName: {
+    color: "#A9B3C3",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  sanctuaryElementStatus: {
+    color: "#D8C4FF",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  sanctuaryLocked: {
+    color: "#5B6478",
+  },
+  sanctuaryReached: {
+    color: "#D8C4FF",
+  },
+  sanctuaryPersonalCard: {
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "rgba(94,234,212,0.25)",
+    backgroundColor: "rgba(94,234,212,0.10)",
+    padding: 14,
+    marginTop: 12,
+  },
+  sanctuaryPersonalTitle: {
+    color: "#D8C4FF",
+    fontSize: 14,
+    fontWeight: "900",
+    marginBottom: 6,
+  },
+  journeyPremiumCard: {
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: "rgba(167,139,250,0.48)",
+    backgroundColor: "#171032",
+    paddingHorizontal: 18,
+    paddingVertical: 20,
+    marginBottom: 16,
+  },
+  journeyCard: {
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: "#263142",
+    backgroundColor: "#151A24",
+    padding: 16,
+    marginBottom: 16,
+  },
+  premiumHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
+    gap: 12,
+  },
+  premiumPillWrap: {
+    minHeight: 52,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(167,139,250,0.34)",
+    backgroundColor: "rgba(11,14,20,0.35)",
+    paddingHorizontal: 18,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  premiumCrown: {
+    color: "#B58BFF",
+    fontSize: 18,
+    fontWeight: "900",
+  },
+  premiumPill: {
+    color: "#B58BFF",
+    fontSize: 19,
+    fontWeight: "900",
+  },
+  journeySectionTitle: {
+    color: "#F2F4F8",
+    fontSize: 22,
+    fontWeight: "900",
+  },
+  journeyCardText: {
+    color: "#D4D8E0",
+    fontSize: 16,
+    lineHeight: 22,
+  },
+  journeyUpdated: {
+    color: "#7E8B9D",
+    fontSize: 12,
+    fontWeight: "800",
+    marginTop: 10,
+  },
+  journeyChipRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 12,
+  },
+  journeyChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#263142",
+    backgroundColor: "#0B0E14",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  journeyChipText: {
+    color: "#D4D8E0",
+    fontSize: 11,
+    fontWeight: "900",
+  },
+  journeyMiniChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    borderWidth: 1,
+    backgroundColor: "#0B0E14",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  journeyMiniChipText: {
+    color: "#A9B3C3",
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  journeyChapterCard: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "#263142",
+    backgroundColor: "#0B0E14",
+    padding: 12,
+  },
+  journeyChapterKicker: {
+    color: "#D8C4FF",
+    fontSize: 10,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 1.4,
+  },
+  journeyChapterTitle: {
+    color: "#F2F4F8",
+    fontSize: 17,
+    fontWeight: "900",
+    marginTop: 4,
+  },
+  journeyMilestoneCard: {
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: "rgba(94,234,212,0.32)",
+    backgroundColor: "rgba(94,234,212,0.10)",
+    padding: 16,
+    marginBottom: 12,
+  },
+  journeyPrimaryButton: {
+    minHeight: 44,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 12,
+    backgroundColor: "#D8C4FF",
+  },
+  journeyPrimaryButtonText: {
+    color: "#081014",
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  patternGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 12,
+    marginBottom: 12,
+  },
+  patternTile: {
+    width: "48%",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#263142",
+    backgroundColor: "#0B0E14",
+    padding: 12,
+  },
+  patternText: {
+    color: "#A9B3C3",
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  inlinePremiumLink: {
+    color: "#D8C4FF",
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  milestoneRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 12,
+  },
+  milestonePill: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#263142",
+    backgroundColor: "#0B0E14",
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  milestoneText: {
+    color: "#A9B3C3",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  askCard: {
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: "rgba(94,234,212,0.25)",
+    backgroundColor: "rgba(94,234,212,0.10)",
+    padding: 16,
+    marginBottom: 16,
+  },
+  askTitle: {
+    color: "#D8C4FF",
+    fontSize: 14,
+    fontWeight: "900",
+    marginBottom: 6,
+  },
+  askButton: {
+    minHeight: 44,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(94,234,212,0.30)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 12,
+    backgroundColor: "#0B0E14",
+  },
+  askButtonText: {
+    color: "#D8C4FF",
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  journeyTitle: {
+    color: "#F2F4F8",
+    fontSize: 38,
+    fontWeight: "900",
+    letterSpacing: -1.6,
+  },
+  journeyTitleShort: {
+    fontSize: 32,
+  },
+  journeySubtitle: {
+    color: "#A9B3C3",
+    fontSize: 22,
+    marginTop: 2,
+  },
+  journeySubtitleShort: {
+    fontSize: 18,
+  },
+  streakCard: {
+    backgroundColor: "rgba(16,23,35,0.82)",
+    borderRadius: 24,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: "#253247",
+    marginBottom: 14,
+  },
+  streakCardShort: {
+    padding: 16,
+    borderRadius: 20,
+    marginBottom: 12,
+  },
+  streakRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 20,
+  },
+  streakEmoji: {
+    fontSize: 28,
+  },
+  streakEmojiShort: {
+    fontSize: 24,
+  },
+  streakNumber: {
+    color: "#F2F4F8",
+    fontSize: 28,
+    fontWeight: "900",
+  },
+  streakNumberShort: {
+    fontSize: 17,
+  },
+  streakLabel: {
+    color: "#A9B3C3",
+    fontSize: 16,
+    fontWeight: "700",
+    marginTop: 1,
+  },
+  streakLabelShort: {
+    fontSize: 10,
+  },
+  streakBest: {
+    color: "#A9B3C3",
+    fontSize: 18,
+    fontWeight: "800",
+  },
+  streakBestShort: {
+    fontSize: 11,
+  },
+  streakDots: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 0,
+  },
+  streakDot: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: "#1E2938",
+  },
+  streakDotActive: {
+    backgroundColor: "#D8C4FF",
+  },
+  chartCard: {
+    backgroundColor: "rgba(16,23,35,0.82)",
+    borderRadius: 24,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: "#253247",
+    marginBottom: 14,
+  },
+  chartCardShort: {
+    padding: 16,
+    borderRadius: 20,
+    marginBottom: 16,
+  },
+  chartTitle: {
+    color: "#F2F4F8",
+    fontSize: 22,
+    fontWeight: "900",
+    marginBottom: 20,
+  },
+  chartTitleShort: {
+    fontSize: 13,
+    marginBottom: 12,
+  },
+  chartBars: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "space-between",
+    height: 88,
+  },
+  chartBarsShort: {
+    height: 48,
+  },
+  chartBarCol: {
+    flex: 1,
+    alignItems: "center",
+    gap: 4,
+  },
+  chartBar: {
+    width: 20,
+    borderRadius: 999,
+    backgroundColor: "#263142",
+    overflow: "hidden",
+    minHeight: 6,
+  },
+  chartLabel: {
+    color: "#A9B3C3",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  chartLabelShort: {
+    fontSize: 8,
+  },
+  emptyState: {
+    alignItems: "center",
+    paddingTop: 60,
+  },
+  emptyStateShort: {
+    paddingTop: 40,
+  },
+  emptyIcon: {
+    fontSize: 48,
+    marginBottom: 12,
+  },
+  emptyIconShort: {
+    fontSize: 36,
+    marginBottom: 8,
+  },
+  emptyText: {
+    color: "#7E8B9D",
+    fontSize: 15,
+    textAlign: "center",
+    paddingHorizontal: 40,
+    lineHeight: 21,
+  },
+  emptyTextShort: {
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  historyGroup: {
+    marginBottom: 8,
+  },
+  historyDateHeader: {
+    color: "#7E8B9D",
+    fontSize: 14,
+    fontWeight: "800",
+    marginBottom: 10,
+    letterSpacing: 0.2,
+  },
+  historyDateHeaderShort: {
+    fontSize: 12,
+    marginBottom: 8,
+  },
+  coachReplyIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginTop: 10,
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  coachReplyIndicatorText: {
+    color: "#B894FF",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  coachReplyArrow: {
+    color: "#B894FF",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  youContent: {
+    paddingBottom: 100,
+    paddingTop: 12,
+  },
+  youHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 24,
+  },
+  youTitle: {
+    color: "#F2F4F8",
+    fontSize: 26,
+    fontWeight: "800",
+    letterSpacing: -1,
+  },
+  youTitleShort: {
+    fontSize: 22,
+  },
+  youSub: {
+    color: "#7E8B9D",
+    fontSize: 14,
+    marginTop: 2,
+  },
+  youSubShort: {
+    fontSize: 12,
+  },
+  youAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "#151A24",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#263142",
+  },
+  youAvatarText: {
+    fontSize: 22,
+  },
+  youCard: {
+    backgroundColor: "#151A24",
+    borderRadius: 20,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#263142",
+    marginBottom: 16,
+  },
+  youPremiumCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: "#151A24",
+    borderRadius: 24,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#263142",
+    marginBottom: 16,
+  },
+  youPremiumCardActive: {
+    borderColor: "rgba(94,234,212,0.40)",
+    backgroundColor: "#171430",
+  },
+  youPremiumIcon: {
+    color: "#B894FF",
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  youCardTitle: {
+    color: "#F2F4F8",
+    fontSize: 16,
+    fontWeight: "900",
+    marginBottom: 4,
+  },
+  youCardBody: {
+    color: "#A9B3C3",
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  youCardMuted: {
+    color: "#5B6478",
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 12,
+  },
+  youSectionHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+    marginBottom: 12,
+  },
+  youInputLabel: {
+    color: "#F2F4F8",
+    fontSize: 14,
+    fontWeight: "800",
+    marginTop: 10,
+    marginBottom: 8,
+  },
+  youInput: {
+    minHeight: 48,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "#263142",
+    backgroundColor: "#0B0E14",
+    color: "#F2F4F8",
+    paddingHorizontal: 14,
+    fontSize: 15,
+  },
+  authCardHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  authStatusPill: {
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    fontSize: 10,
+    fontWeight: "900",
+    overflow: "hidden",
+    textTransform: "uppercase",
+  },
+  authForm: {
+    gap: 10,
+    marginTop: 14,
+  },
+  authEmailCard: {
+    borderRadius: 18,
+    borderWidth: 1,
+    padding: 12,
+    gap: 10,
+  },
+  authSummaryCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 12,
+    gap: 6,
+  },
+  authSummaryLabel: {
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 1.1,
+    textTransform: "uppercase",
+  },
+  authSummaryValue: {
+    fontSize: 15,
+    fontWeight: "800",
+  },
+  authButtonRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  passwordHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  passwordRuleText: {
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  authMetaActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 14,
+  },
+  authMetaText: {
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  notificationRow: {
+    minHeight: 48,
+    borderRadius: 16,
+    borderWidth: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 14,
+  },
+  notificationLabel: {
+    fontSize: 14,
+    fontWeight: "800",
+    flex: 1,
+    paddingRight: 12,
+  },
+  notificationValue: {
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  notificationOptionsWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  notificationOptionChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  notificationOptionText: {
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  authPrimaryButton: {
+    flex: 1,
+    minHeight: 46,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  authPrimaryText: {
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  authSecondaryButton: {
+    flex: 1,
+    minHeight: 46,
+    borderRadius: 16,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.03)",
+  },
+  authSecondaryText: {
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  themeSectionTitle: {
+    color: "#F2F4F8",
+    fontSize: 24,
+    fontWeight: "900",
+    letterSpacing: -0.8,
+  },
+  themeSectionBody: {
+    color: "#A9B3C3",
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 4,
+  },
+  sanctuaryThemeGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 12,
+  },
+  sanctuaryThemeTile: {
+    width: "48%",
+    minHeight: 92,
+    borderRadius: 18,
+    borderWidth: 1.5,
+    borderColor: "#263142",
+    overflow: "hidden",
+    padding: 10,
+    justifyContent: "space-between",
+  },
+  themeShade: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(5,8,14,0.32)",
+  },
+  themeBottomShade: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 70,
+  },
+  sanctuaryThemeIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1.5,
+    borderColor: "rgba(255,255,255,0.24)",
+    backgroundColor: "rgba(11,14,20,0.48)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  themeCheck: {
+    position: "absolute",
+    right: 10,
+    top: 10,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  themeCheckText: {
+    color: "#0B0E14",
+    fontSize: 17,
+    fontWeight: "900",
+  },
+  themeLockBadge: {
+    position: "absolute",
+    right: 8,
+    top: 8,
+    borderRadius: 999,
+    backgroundColor: "rgba(11,14,20,0.58)",
+    borderWidth: 1,
+    borderColor: "#263142",
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+  },
+  themeLockText: {
+    color: "#A9B3C3",
+    fontSize: 10,
+    fontWeight: "900",
+  },
+  themeTileCopy: {
+    marginTop: 8,
+  },
+  sanctuaryThemeName: {
+    color: "#F2F4F8",
+    fontSize: 15,
+    fontWeight: "900",
+    letterSpacing: -0.4,
+  },
+  sanctuaryThemeDesc: {
+    color: "#D4D8E0",
+    fontSize: 10,
+    lineHeight: 13,
+    marginTop: 2,
+    maxWidth: "92%",
+  },
+  sanctuaryThemeBar: {
+    height: 6,
+    borderRadius: 999,
+    marginTop: 8,
+  },
+  themePreviewPanel: {
+    minHeight: 310,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: "#263142",
+    overflow: "hidden",
+    marginTop: 16,
+    padding: 16,
+  },
+  themePreviewButton: {
+    minHeight: 52,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(167,139,250,0.42)",
+    backgroundColor: "rgba(167,139,250,0.10)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 16,
+  },
+  themePreviewButtonText: {
+    color: "#C4B5FD",
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  themeApplyButton: {
+    minHeight: 52,
+    borderRadius: 18,
+    backgroundColor: "#D8C4FF",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 10,
+  },
+  themeApplyButtonDisabled: {
+    opacity: 0.45,
+  },
+  themeApplyButtonText: {
+    color: "#0B0E14",
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  themeModalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.72)",
+    justifyContent: "flex-end",
+    padding: 12,
+  },
+  themeModalCard: {
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: "#263142",
+    backgroundColor: "#151A24",
+    overflow: "hidden",
+  },
+  themeModalPicture: {
+    height: 270,
+    overflow: "hidden",
+  },
+  themeModalClose: {
+    position: "absolute",
+    right: 14,
+    top: 14,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: "rgba(11,14,20,0.72)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  themeModalCloseText: {
+    color: "#A9B3C3",
+    fontSize: 20,
+    fontWeight: "800",
+  },
+  themeModalCopy: {
+    position: "absolute",
+    left: 18,
+    right: 18,
+    bottom: 18,
+  },
+  themeModalBody: {
+    padding: 14,
+  },
+  themePreviewShade: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(5,8,14,0.18)",
+  },
+  themePreviewHeader: {
+    flexDirection: "row",
+    gap: 12,
+    alignItems: "center",
+  },
+  themePreviewIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: 18,
+    borderWidth: 1.5,
+    backgroundColor: "rgba(11,14,20,0.42)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  themePreviewBadge: {
+    alignSelf: "flex-start",
+    color: "#C4B5FD",
+    backgroundColor: "rgba(167,139,250,0.22)",
+    borderRadius: 999,
+    overflow: "hidden",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    fontSize: 10,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  themePreviewTitle: {
+    color: "#F2F4F8",
+    fontSize: 25,
+    fontWeight: "900",
+    marginTop: 8,
+  },
+  themePreviewText: {
+    color: "#D4D8E0",
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 3,
+  },
+  themeMockNav: {
+    minHeight: 72,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(11,14,20,0.35)",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-around",
+    marginTop: 28,
+  },
+  themeMockNavItem: {
+    alignItems: "center",
+    gap: 4,
+  },
+  themeMockIcon: {
+    color: "#A9B3C3",
+    fontSize: 22,
+    fontWeight: "900",
+  },
+  themeMockLabel: {
+    color: "#A9B3C3",
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  themeMockStats: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 12,
+  },
+  themeMockCard: {
+    flex: 1,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(11,14,20,0.34)",
+    padding: 12,
+  },
+  themeMockValue: {
+    fontSize: 17,
+    fontWeight: "900",
+  },
+  themeMockSub: {
+    color: "#A9B3C3",
+    fontSize: 12,
+    fontWeight: "700",
+    marginTop: 3,
+  },
+  themeDotRow: {
+    flexDirection: "row",
+    gap: 7,
+    marginTop: 13,
+  },
+  themeDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#263142",
+  },
+  themeLockedRail: {
+    minHeight: 68,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#263142",
+    backgroundColor: "rgba(11,14,20,0.40)",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-around",
+    marginTop: 14,
+  },
+  themeLockedIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(21,26,36,0.92)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  themeLockedIconText: {
+    color: "#7E8B9D",
+    fontSize: 20,
+    fontWeight: "900",
+  },
+  themeLockedLock: {
+    position: "absolute",
+    right: -2,
+    bottom: -2,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: "rgba(11,14,20,0.92)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  themeHintBox: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "#263142",
+    backgroundColor: "rgba(11,14,20,0.42)",
+    padding: 14,
+    marginTop: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  themeHintIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#263142",
+    backgroundColor: "rgba(21,26,36,0.92)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  themeHintText: {
+    flex: 1,
+    color: "#A9B3C3",
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  themeGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  themeTile: {
+    width: "48%",
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "#263142",
+    backgroundColor: "rgba(11,14,20,0.60)",
+    padding: 12,
+  },
+  themeTileHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  themeEmoji: {
+    color: "#F2F4F8",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  themeBadge: {
+    color: "#B894FF",
+    fontSize: 9,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  themeActive: {
+    color: "#D8C4FF",
+    fontSize: 9,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  themeSwatch: {
+    height: 12,
+    borderRadius: 999,
+    marginBottom: 8,
+  },
+  themeLabel: {
+    color: "#F2F4F8",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  demoBadge: {
+    color: "#D8C4FF",
+    fontSize: 11,
+    fontWeight: "900",
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(94,234,212,0.25)",
+    backgroundColor: "rgba(94,234,212,0.10)",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    overflow: "hidden",
+  },
+  demoGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  demoButton: {
+    width: "48%",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#263142",
+    backgroundColor: "rgba(11,14,20,0.70)",
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+  },
+  demoButtonTitle: {
+    color: "#F2F4F8",
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  demoButtonSub: {
+    color: "#7E8B9D",
+    fontSize: 12,
+    fontWeight: "800",
+    marginTop: 2,
+  },
+  demoClearButton: {
+    minHeight: 44,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(167,139,250,0.35)",
+    backgroundColor: "rgba(167,139,250,0.10)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 12,
+  },
+  demoClearText: {
+    color: "#B58BFF",
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  youFooter: {
+    color: "#5B6478",
+    fontSize: 12,
+    textAlign: "center",
+    paddingTop: 4,
+    paddingBottom: 8,
+  },
+  dataControlButton: {
+    minHeight: 44,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#263142",
+    backgroundColor: "#0B0E14",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 12,
+  },
+  dataControlText: {
+    color: "#D4D8E0",
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  dangerButton: {
+    minHeight: 44,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(248,113,113,0.35)",
+    backgroundColor: "rgba(248,113,113,0.10)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 10,
+  },
+  dangerButtonText: {
+    color: "#FCA5A5",
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  youCardRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 8,
+  },
+  youCardLabel: {
+    color: "#7E8B9D",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  youCardLabelShort: {
+    fontSize: 12,
+  },
+  youCardValue: {
+    color: "#F2F4F8",
+    fontSize: 16,
+    fontWeight: "800",
+  },
+  youCardValueShort: {
+    fontSize: 14,
+  },
+  youCardDivider: {
+    height: 1,
+    backgroundColor: "#263142",
+    marginVertical: 4,
+  },
+  youSectionTitle: {
+    color: "#7E8B9D",
+    fontSize: 13,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 12,
+  },
+  youSectionTitleShort: {
+    fontSize: 11,
+    marginBottom: 10,
+  },
+  youSetting: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    backgroundColor: "#151A24",
+    padding: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#263142",
+    marginBottom: 8,
+  },
+  youSettingShort: {
+    padding: 14,
+    borderRadius: 14,
+    marginBottom: 6,
+  },
+  youSettingText: {
+    color: "#F2F4F8",
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  youSettingTextShort: {
+    fontSize: 13,
+  },
+  youSettingArrow: {
+    color: "#5B6478",
+    fontSize: 18,
+  },
+  onboardingOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.72)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 18,
+  },
+  onboardingCard: {
+    width: "100%",
+    maxWidth: 390,
+    borderRadius: 28,
+    borderWidth: 1,
+    padding: 22,
+    alignItems: "center",
+    gap: 14,
+  },
+  onboardingLotus: {
+    width: 78,
+    height: 78,
+    borderRadius: 39,
+    borderWidth: 1.5,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#B894FF",
+    shadowOpacity: 0.45,
+    shadowRadius: 24,
+  },
+  onboardingTitle: {
+    fontSize: 25,
+    fontWeight: "900",
+    letterSpacing: -0.7,
+    textAlign: "center",
+  },
+  onboardingBody: {
+    fontSize: 15,
+    lineHeight: 22,
+    textAlign: "center",
+  },
+  onboardingButton: {
+    minHeight: 52,
+    minWidth: 230,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    alignSelf: "center",
+  },
+  onboardingButtonText: {
+    fontSize: 15,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  sanctuaryArtworkFrame: {
+    height: 218,
+    borderRadius: 24,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+  },
+  sanctuaryArtworkImage: {
+    width: "100%",
+    height: "100%",
+  },
+  sanctuaryArtworkText: {
+    position: "absolute",
+    left: 14,
+    right: 14,
+    bottom: 14,
+    fontSize: 14,
+    fontWeight: "800",
+    lineHeight: 19,
+  },
+  currentSanctuaryBanner: {
+    height: 190,
+    borderRadius: 24,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+  },
+  currentSanctuaryImage: {
+    width: "100%",
+    height: "100%",
+  },
+  currentSanctuaryCopy: {
+    position: "absolute",
+    left: 14,
+    right: 14,
+    bottom: 14,
+    gap: 5,
+  },
+  currentSanctuaryTitle: {
+    color: "#F8F5FF",
+    fontSize: 22,
+    fontWeight: "900",
+    letterSpacing: -0.6,
+  },
+  currentSanctuaryText: {
+    color: "#D4D8E0",
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "700",
+  },
+  currentSanctuaryBadge: {
+    fontSize: 11,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+  currentSanctuaryActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 12,
+  },
+  themePickerCard: {
+    maxHeight: "88%",
+    borderRadius: 28,
+    borderWidth: 1,
+    padding: 14,
+  },
+  themePickerHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  themePickerSection: {
+    marginTop: 10,
+  },
+  themePickerGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  themePickerTile: {
+    width: "48%",
+    minHeight: 178,
+    borderRadius: 20,
+    borderWidth: 1,
+    overflow: "hidden",
+  },
+  themePickerImage: {
+    ...StyleSheet.absoluteFillObject,
+    width: "100%",
+    height: "100%",
+  },
+  themePickerTileCopy: {
+    flex: 1,
+    justifyContent: "flex-end",
+    padding: 10,
+    gap: 4,
+  },
+  themePickerTileTitle: {
+    color: "#F8F5FF",
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  themePickerTileSub: {
+    color: "#D4D8E0",
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  themePickerActions: {
+    flexDirection: "row",
+    gap: 6,
+    marginTop: 6,
+  },
+  themePickerSmallButton: {
+    flex: 1,
+    borderRadius: 999,
+    backgroundColor: "rgba(11,14,20,0.72)",
+    paddingVertical: 7,
+    alignItems: "center",
+  },
+  themePickerSmallText: {
+    fontSize: 10,
+    fontWeight: "900",
+  },
+  themeMilestoneRow: {
+    minHeight: 64,
+    borderRadius: 18,
+    borderWidth: 1,
+    padding: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  themeMilestoneImage: {
+    width: 50,
+    height: 50,
+    borderRadius: 14,
+  },
+  themeMilestoneTitle: {
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  themeMilestoneSub: {
+    fontSize: 11,
+    fontWeight: "700",
+    marginTop: 2,
+  },
+  themeMilestoneBadge: {
+    fontSize: 10,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  themeModalImage: {
+    width: "100%",
+    height: "100%",
+  },
+  themeAmbientRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 7,
+    marginBottom: 10,
+  },
+  themeAmbientPill: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  themePalettePill: {
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  sanctuaryModalArtworkFrame: {
+    height: 300,
+    borderRadius: 24,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+  },
+  sanctuaryModalArtwork: {
+    width: "100%",
+    height: "100%",
+  },
+  tabs: {
+    position: "absolute",
+    left: 16,
+    right: 16,
+    bottom: 8,
+    flexDirection: "row",
+    gap: 8,
+    backgroundColor: "#101723",
+    borderRadius: 28,
+    padding: 6,
+    borderWidth: 1,
+    borderColor: "#263142",
+  },
+  tab: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    borderRadius: 22,
+  },
+  tabActive: {
+    backgroundColor: "#F8EFE3",
+  },
+  tabText: {
+    color: "#A9B3C3",
+    fontWeight: "800",
+    fontSize: 10,
+  },
+  tabTextActive: {
+    color: "#0B0E14",
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.7)",
+    justifyContent: "flex-end",
+    paddingBottom: 40,
+    paddingHorizontal: 16,
+  },
+  modalCard: {
+    backgroundColor: "#151A24",
+    borderRadius: 28,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: "#263142",
+  },
+  premiumModalCard: {
+    backgroundColor: "#151A24",
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: "#263142",
+  },
+  modalHandle: {
+    alignSelf: "center",
+    width: 42,
+    height: 5,
+    borderRadius: 999,
+    backgroundColor: "#263142",
+    marginBottom: 18,
+  },
+  premiumModalIcon: {
+    color: "#B894FF",
+    fontSize: 18,
+    fontWeight: "900",
+    textAlign: "center",
+    marginBottom: 8,
+  },
+  premiumLotusIcon: {
+    alignSelf: "center",
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 12,
+  },
+  premiumModalTitle: {
+    color: "#F2F4F8",
+    fontSize: 26,
+    fontWeight: "900",
+    textAlign: "center",
+    letterSpacing: -0.8,
+  },
+  premiumModalBody: {
+    color: "#A9B3C3",
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: "center",
+    marginTop: 8,
+    marginBottom: 18,
+  },
+  premiumPerkRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 10,
+  },
+  premiumPerkDot: {
+    color: "#D8C4FF",
+    fontSize: 18,
+    fontWeight: "900",
+  },
+  premiumPerkIcon: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(184,148,255,0.10)",
+  },
+  premiumPerkIconText: {
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  premiumPerkText: {
+    color: "#F2F4F8",
+    fontSize: 15,
+    fontWeight: "800",
+    flex: 1,
+  },
+  premiumUpgradeButton: {
+    borderRadius: 20,
+    overflow: "hidden",
+    marginTop: 8,
+  },
+  premiumUpgradeGradient: {
+    minHeight: 56,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  premiumUpgradeText: {
+    color: "#081014",
+    fontSize: 17,
+    fontWeight: "900",
+  },
+  premiumPriceNote: {
+    marginTop: 8,
+    textAlign: "center",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  premiumCloseButton: {
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 8,
+  },
+  premiumCloseText: {
+    color: "#7E8B9D",
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  modalCardShort: {
+    padding: 20,
+    borderRadius: 24,
+  },
+  modalClose: {
+    alignSelf: "flex-end",
+    marginBottom: 8,
+  },
+  modalCloseText: {
+    color: "#5B6478",
+    fontSize: 20,
+    fontWeight: "700",
+  },
+  kicker: {
+    color: "#B894FF",
+    fontSize: 12,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  kickerShort: {
+    fontSize: 10,
+  },
+  modalUserEntry: {
+    color: "#F2F4F8",
+    fontSize: 15,
+    fontStyle: "italic",
+    lineHeight: 21,
+  },
+  modalUserEntryShort: {
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  modalMessage: {
+    color: "#D4D8E0",
+    fontSize: 15,
+    lineHeight: 22,
+    marginBottom: 20,
+  },
+  modalMessageShort: {
+    fontSize: 13,
+    lineHeight: 19,
+    marginBottom: 16,
+  },
+  nextStepBox: {
+    backgroundColor: "#1E2938",
+    borderRadius: 16,
+    padding: 16,
+    borderLeftWidth: 3,
+    borderLeftColor: "#B894FF",
+  },
+  nextStepBoxShort: {
+    padding: 14,
+    borderRadius: 14,
+  },
+  nextStepLabel: {
+    color: "#B894FF",
+    fontSize: 11,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+    marginBottom: 6,
+  },
+  nextStepLabelShort: {
+    fontSize: 9,
+  },
+  nextStep: {
+    color: "#E8D5B7",
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  nextStepShort: {
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  historyItem: {
+    padding: 16,
+    borderRadius: 20,
+    backgroundColor: "#151A24",
+    borderWidth: 1,
+    borderColor: "#263142",
+    marginBottom: 10,
+  },
+  date: {
+    color: "#7E8B9D",
+    fontSize: 11,
+    fontWeight: "800",
+    marginBottom: 6,
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+  historyText: {
+    color: "#F7F1E8",
+    fontSize: 16,
+    lineHeight: 23,
+    fontWeight: "700",
+  },
+  coachMarkOverlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+    paddingHorizontal: 18,
+    paddingBottom: 118,
+    backgroundColor: "rgba(0,0,0,0.34)",
+  },
+  coachMarkCard: {
+    borderRadius: 26,
+    borderWidth: 1,
+    padding: 16,
+    shadowColor: "#000",
+    shadowOpacity: 0.26,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 12,
+  },
+  coachMarkHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  coachMarkKicker: {
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 2,
+    textTransform: "uppercase",
+  },
+  coachMarkTitle: {
+    marginTop: 4,
+    fontSize: 22,
+    fontWeight: "900",
+  },
+  coachMarkClose: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+  },
+  coachMarkCloseText: {
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  coachMarkBody: {
+    marginTop: 10,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  coachMarkMetaRow: {
+    marginTop: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  coachMarkProgress: {
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  coachMarkSkipText: {
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  coachMarkActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 10,
+  },
+  coachMarkPrimary: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  coachMarkPrimaryText: {
+    fontSize: 14,
+    fontWeight: "900",
+  },
+});
