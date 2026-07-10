@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { firebaseConfigured } from "@/lib/firebase";
-import { listAdminAiUsage, listAdminErrors, listAdminSupportTickets, listAdminUsers, listAdminWaitlistSignups, WAITLIST_MAX_SPOTS } from "@/lib/adminSupport";
+import { listAdminAiUsage, listAdminErrors, listAdminSiteAnalytics, listAdminSupportTickets, listAdminUsers, listAdminWaitlistSignups, WAITLIST_MAX_SPOTS } from "@/lib/adminSupport";
 
 type AdminRow = Record<string, any> & { id: string };
 
@@ -13,11 +13,33 @@ function formatDate(value: any) {
   return String(value);
 }
 
+function featureCalls(period: AdminRow | undefined, feature: string) {
+  return Number(period?.features?.[feature]?.calls ?? 0);
+}
+
+function featureCost(period: AdminRow | undefined, feature: string) {
+  return Number(period?.features?.[feature]?.cost ?? 0);
+}
+
+function featureLabel(feature: string) {
+  const labels: Record<string, string> = {
+    daily_insight: "Get Insights",
+    weekly_summary: "Weekly Insights",
+    reflection_classifier: "Reflection guardrail",
+    prompt_selection: "Prompt personalization",
+    tag_detection: "Tag detection",
+    monthly_summary: "Monthly summary",
+    long_term_pattern: "Long-term patterns",
+  };
+  return labels[feature] ?? feature.replaceAll("_", " ");
+}
+
 export default function AdminTroubleshooting() {
   const [users, setUsers] = useState<AdminRow[]>([]);
   const [tickets, setTickets] = useState<AdminRow[]>([]);
   const [errors, setErrors] = useState<AdminRow[]>([]);
   const [waitlist, setWaitlist] = useState<AdminRow[]>([]);
+  const [siteAnalytics, setSiteAnalytics] = useState<AdminRow[]>([]);
   const [aiUsage, setAiUsage] = useState<{ periods: AdminRow[]; users: AdminRow[]; logs: AdminRow[] }>({
     periods: [],
     users: [],
@@ -29,14 +51,15 @@ export default function AdminTroubleshooting() {
     if (!firebaseConfigured()) return;
     let cancelled = false;
     setLoading(true);
-    Promise.all([listAdminUsers(), listAdminSupportTickets(), listAdminErrors(), listAdminAiUsage(), listAdminWaitlistSignups()])
-      .then(([nextUsers, nextTickets, nextErrors, nextAiUsage, nextWaitlist]) => {
+    Promise.all([listAdminUsers(), listAdminSupportTickets(), listAdminErrors(), listAdminAiUsage(), listAdminWaitlistSignups(), listAdminSiteAnalytics()])
+      .then(([nextUsers, nextTickets, nextErrors, nextAiUsage, nextWaitlist, nextSiteAnalytics]) => {
         if (cancelled) return;
         setUsers(nextUsers as AdminRow[]);
         setTickets(nextTickets as AdminRow[]);
         setErrors(nextErrors as AdminRow[]);
         setAiUsage(nextAiUsage as { periods: AdminRow[]; users: AdminRow[]; logs: AdminRow[] });
         setWaitlist(nextWaitlist as AdminRow[]);
+        setSiteAnalytics(nextSiteAnalytics as AdminRow[]);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -51,6 +74,8 @@ export default function AdminTroubleshooting() {
     const month = today.slice(0, 7);
     const todayAi = aiUsage.periods.find((period) => period.id === `day-${today}`);
     const monthAi = aiUsage.periods.find((period) => period.id === `month-${month}`);
+    const todaySite = siteAnalytics.find((period) => period.id === `day-${today}`);
+    const monthSite = siteAnalytics.find((period) => period.id === `month-${month}`);
     const totalAiCallsThisMonth = Number(monthAi?.totalCalls ?? 0);
     const totalReflections = users.reduce((sum, user) => sum + Number(user.reflectionCount ?? 0), 0);
     return {
@@ -64,8 +89,19 @@ export default function AdminTroubleshooting() {
       openTickets: tickets.filter((ticket) => ticket.status !== "closed" && ticket.status !== "resolved").length,
       waitlistCount: waitlist.length,
       waitlistRemaining: Math.max(0, WAITLIST_MAX_SPOTS - waitlist.length),
+      pageViewsToday: Number(todaySite?.pageViews ?? 0),
+      uniqueVisitorsToday: Number(todaySite?.uniqueVisitors ?? 0),
+      sessionsToday: Number(todaySite?.sessions ?? 0),
+      pageViewsThisMonth: Number(monthSite?.pageViews ?? 0),
+      uniqueVisitorsThisMonth: Number(monthSite?.uniqueVisitors ?? 0),
       aiCallsToday: Number(todayAi?.totalCalls ?? 0),
       aiCallsThisMonth: totalAiCallsThisMonth,
+      getInsightsToday: featureCalls(todayAi, "daily_insight"),
+      getInsightsThisMonth: featureCalls(monthAi, "daily_insight"),
+      weeklyInsightsToday: featureCalls(todayAi, "weekly_summary"),
+      weeklyInsightsThisMonth: featureCalls(monthAi, "weekly_summary"),
+      getInsightsCostThisMonth: featureCost(monthAi, "daily_insight"),
+      weeklyInsightsCostThisMonth: featureCost(monthAi, "weekly_summary"),
       aiCostToday: Number(todayAi?.estimatedCost ?? 0),
       aiCostThisMonth: Number(monthAi?.estimatedCost ?? 0),
       rejectedNonReflectionToday: Number(todayAi?.rejectedNonReflection ?? 0),
@@ -73,7 +109,7 @@ export default function AdminTroubleshooting() {
       averageCostPerReflection:
         totalReflections > 0 ? Number(monthAi?.estimatedCost ?? 0) / totalReflections : 0,
     };
-  }, [aiUsage.periods, tickets, users, waitlist]);
+  }, [aiUsage.periods, siteAnalytics, tickets, users, waitlist]);
 
   if (!firebaseConfigured()) {
     return (
@@ -111,8 +147,15 @@ export default function AdminTroubleshooting() {
           ["iOS / Web", `${stats.iosUsers} / ${stats.webUsers}`],
           ["Premium / Free", `${stats.payingUsers} / ${stats.freeUsers}`],
           ["Waitlist signups", `${stats.waitlistCount} / ${WAITLIST_MAX_SPOTS}`],
+          ["Visitors today", stats.uniqueVisitorsToday],
+          ["Page views today", stats.pageViewsToday],
+          ["Visitors month", stats.uniqueVisitorsThisMonth],
+          ["Page views month", stats.pageViewsThisMonth],
           ["Users with errors", stats.usersWithErrors],
           ["Open tickets", stats.openTickets],
+          ["Get Insights today", stats.getInsightsToday],
+          ["Get Insights month", stats.getInsightsThisMonth],
+          ["Weekly Insights month", stats.weeklyInsightsThisMonth],
           ["AI calls today", stats.aiCallsToday],
           ["AI cost today", `$${stats.aiCostToday.toFixed(4)}`],
           ["Rejected today", stats.rejectedNonReflectionToday],
@@ -127,6 +170,24 @@ export default function AdminTroubleshooting() {
 
       <div className="mt-5 grid gap-4 xl:grid-cols-4">
         <div className="rounded-2xl border border-edge bg-ink/50 p-3">
+          <h3 className="text-sm font-black text-calm">Site analytics</h3>
+          <div className="mt-3 flex flex-col gap-2">
+            {siteAnalytics.slice(0, 8).map((period) => (
+              <div key={period.id} className="rounded-xl border border-edge bg-card p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-black">{period.key ?? period.id}</p>
+                  <span className="text-[10px] font-black uppercase text-faint">{period.period}</span>
+                </div>
+                <p className="mt-1 text-xs text-dim">
+                  {Number(period.uniqueVisitors ?? 0)} visitors - {Number(period.pageViews ?? 0)} views - {Number(period.sessions ?? 0)} sessions
+                </p>
+              </div>
+            ))}
+            {!siteAnalytics.length ? <p className="py-6 text-center text-sm text-faint">No site visits logged yet.</p> : null}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-edge bg-ink/50 p-3">
           <h3 className="text-sm font-black text-calm">AI usage</h3>
           <div className="mt-3 grid gap-2">
             {[
@@ -137,6 +198,23 @@ export default function AdminTroubleshooting() {
               <div key={label} className="rounded-xl border border-edge bg-card p-3">
                 <p className="text-[10px] font-black uppercase tracking-wide text-faint">{label}</p>
                 <p className="mt-1 text-xl font-black">{value}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-edge bg-ink/50 p-3">
+          <h3 className="text-sm font-black text-calm">AI feature usage</h3>
+          <div className="mt-3 flex flex-col gap-2">
+            {[
+              ["Get Insights", stats.getInsightsToday, stats.getInsightsThisMonth, stats.getInsightsCostThisMonth],
+              ["Weekly Insights", stats.weeklyInsightsToday, stats.weeklyInsightsThisMonth, stats.weeklyInsightsCostThisMonth],
+            ].map(([label, todayCount, monthCount, monthCost]) => (
+              <div key={label} className="rounded-xl border border-edge bg-card p-3">
+                <p className="text-xs font-black">{label}</p>
+                <p className="mt-1 text-xs text-dim">
+                  Today: {todayCount} - Month: {monthCount} - ${Number(monthCost).toFixed(4)}
+                </p>
               </div>
             ))}
           </div>
@@ -179,7 +257,8 @@ export default function AdminTroubleshooting() {
           <div className="mt-3 flex flex-col gap-2">
             {Object.entries(aiUsage.periods.find((period) => period.id.startsWith("month-"))?.features ?? {}).map(([feature, value]: [string, any]) => (
               <div key={feature} className="rounded-xl border border-edge bg-card p-3">
-                <p className="text-xs font-black">{feature}</p>
+                <p className="text-xs font-black">{featureLabel(feature)}</p>
+                <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-faint">{feature}</p>
                 <p className="mt-1 text-xs text-dim">
                   {value.calls ?? 0} calls - ${Number(value.cost ?? 0).toFixed(4)}
                 </p>

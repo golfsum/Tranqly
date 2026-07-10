@@ -1,4 +1,5 @@
 import AppShell from "@/components/AppShell";
+import SiteAnalyticsTracker from "@/components/SiteAnalyticsTracker";
 import ComingSoonLanding from "./coming-soon/ComingSoonLanding";
 
 const SHOW_COMING_SOON =
@@ -7,8 +8,18 @@ const SHOW_COMING_SOON =
 
 export default function Page() {
   if (SHOW_COMING_SOON) {
-    return <ComingSoonLanding />;
+    return (
+      <>
+        <SiteAnalyticsTracker page="home" />
+        <ComingSoonLanding />
+      </>
+    );
   }
 
-  return <AppShell />;
+  return (
+    <>
+      <SiteAnalyticsTracker page="app" />
+      <AppShell />
+    </>
+  );
 }

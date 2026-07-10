@@ -307,6 +307,13 @@ export async function listAdminAiUsage() {
   };
 }
 
+export async function listAdminSiteAnalytics() {
+  const fb = getFirebase();
+  if (!fb) return [];
+  const snap = await getDocs(query(collection(fb.db, "siteAnalytics"), orderBy("updatedAt", "desc"), limit(40)));
+  return snap.docs.map((item) => ({ id: item.id, ...item.data() }));
+}
+
 export async function listWaitlistSignups() {
   const fb = getFirebase();
   if (!fb) return [];
