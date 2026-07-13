@@ -39,10 +39,10 @@ const memorySignals = [
 const plusFeatures = [
   "Everything in Free",
   "Unlimited AI insights",
-  "Weekly reflection",
+  "Weekly reflection summaries",
   "Advanced pattern tracking",
-  "All sanctuary themes",
-  "Priority access to new features",
+  "Exclusive sanctuary themes",
+  "More personalized guidance over time",
 ] as const;
 
 function Icon({
@@ -622,7 +622,7 @@ export default function ComingSoonLanding({ launchMode = false }: { launchMode?:
             <GlassCard className="p-6">
               <p className="text-[2rem] font-semibold text-white">Free</p>
               <ul className="mt-5 space-y-3 text-white/72">
-                {["Unlimited reflections", "Voice or text", "Daily AI insights", "1 sanctuary"].map((item) => (
+                {["Unlimited reflections", "Voice or text", "5 AI insights per day", "Sanctuaries unlocked as you reflect"].map((item) => (
                   <li key={item} className="flex items-center gap-3">
                     <span className="grid h-5 w-5 place-items-center rounded-full bg-[#22162f] text-xs text-[#d2a9ff]">✓</span>
                     <span>{item}</span>

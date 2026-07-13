@@ -5979,12 +5979,12 @@ export default function App() {
                 <Text style={[styles.premiumModalBody, themedBody]}>
                   Go deeper with every reflection.
                   {"\n\n"}
-                  Premium unlocks unlimited reflections, weekly pattern summaries, premium sanctuary themes, and more personal guidance over time.
+                  Plus unlocks unlimited AI insights, weekly reflection summaries, exclusive sanctuary themes, and more personalized guidance over time.
                 </Text>
                 {[
-                  "Unlimited reflections & insights",
-                  "Weekly pattern summaries",
-                  "Premium sanctuary themes",
+                  "Unlimited AI insights",
+                  "Weekly reflection summaries",
+                  "Exclusive sanctuary themes",
                   "More personalized guidance over time",
                 ].map((item) => (
                   <View key={item} style={styles.premiumPerkRow}>

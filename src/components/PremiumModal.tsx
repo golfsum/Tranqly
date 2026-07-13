@@ -7,16 +7,16 @@ import { useApp } from "@/lib/store";
 
 const PERKS = [
   {
-    title: "Unlimited reflections & insights",
-    desc: "Reflect and receive guidance without a daily cap",
+    title: "Unlimited AI insights",
+    desc: "Receive guidance without the five-insight daily cap",
   },
   {
-    title: "Weekly pattern summaries",
+    title: "Weekly reflection summaries",
     desc: "See what Tranqly notices across your week",
   },
   {
-    title: "Premium sanctuary themes",
-    desc: "Explore more peaceful places as you grow",
+    title: "Exclusive sanctuary themes",
+    desc: "Explore Plus sanctuaries alongside the places earned through reflection",
   },
   {
     title: "More personalized guidance over time",
@@ -108,8 +108,8 @@ export default function PremiumModal({
               </h2>
               <p className="mt-1 text-sm text-dim">Go deeper with every reflection.</p>
               <p className="mt-3 text-sm leading-relaxed text-dim">
-                Premium unlocks unlimited reflections, weekly pattern summaries,
-                premium sanctuary themes, and more personal guidance over time.
+                Plus unlocks unlimited AI insights, weekly reflection summaries,
+                exclusive sanctuary themes, and more personalized guidance over time.
               </p>
             </div>
 
