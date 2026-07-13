@@ -45,12 +45,24 @@ export function localCoachReply(entry: string, streak: number): CoachReply {
         "Maybe tell one person about this. Sharing progress quietly doubles it.",
       ];
 
+  const sleepRelated = /sleep|slept|tired|rest/.test(lower);
+  const workRelated = /work|job|meeting|deadline|interview/.test(lower);
+  const connectionRelated = /family|friend|partner|fianc|sister|brother/.test(lower);
+  const title = sleepRelated ? "Rest shaped the day" : workRelated ? "Making space around work" : connectionRelated ? "Connection mattered today" : struggled ? "A demanding day, noticed clearly" : "A moment worth keeping";
+  const preview = sleepRelated
+    ? "Your energy today may make more sense when viewed alongside the rest you had available."
+    : workRelated
+      ? "The important detail may be how you made room for yourself while work was asking for your attention."
+      : connectionRelated
+        ? "A moment of connection seems to have changed the shape of the day."
+        : "One detail from today may be more meaningful than it first appeared.";
+
   return {
-    title: "Today I noticed...",
+    title,
+    preview,
+    nudgeLabel: struggled ? "A Little Reassurance" : "Something to Notice",
     message: pick(openers) + streakLine,
-    pattern: struggled
-      ? "Hard days may be where your needs become easiest to see."
-      : "Small actions become easier to notice when you check in consistently.",
+    pattern: undefined,
     nextStep: pick(nextSteps),
     summary: entry.slice(0, 140),
     themes: struggled ? ["challenge", "self-awareness"] : ["progress", "consistency"],

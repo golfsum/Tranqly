@@ -5,20 +5,20 @@ import Link from "next/link";
 import WaitlistSignup from "@/components/WaitlistSignup";
 
 const sanctuaryCards = [
-  { key: "blossom", label: "Lotus Blossom", artwork: "/sanctuary/lotus_blossom.PNG", unlocks: "Current Sanctuary" },
-  { key: "ocean", label: "Ocean Calm", artwork: "/sanctuary/ocean_calm.PNG", unlocks: "Unlocks at 10 reflections" },
-  { key: "forest", label: "Forest Haven", artwork: "/sanctuary/forest_haven.PNG", unlocks: "Unlocks at 15 reflections" },
-  { key: "sunset", label: "Sunset Fields", artwork: "/sanctuary/sunset_fields.PNG", unlocks: "Unlocks at 20 reflections" },
-  { key: "mountain", label: "Mountain Peak", artwork: "/sanctuary/mountain_peak.PNG", unlocks: "Unlocks at 24 reflections" },
-  { key: "misty", label: "Misty Meadow", artwork: "/sanctuary/misty_meadows.PNG", unlocks: "Unlocks at 27 reflections" },
-  { key: "desert", label: "Desert Dusk", artwork: "/sanctuary/desert_dusk.PNG", unlocks: "Unlocks at 30 reflections" },
+  { key: "twilight", label: "Twilight Grove", artwork: "/sanctuary/twilight_grove.PNG", unlocks: "Current Sanctuary" },
+  { key: "forest", label: "Forest Haven", artwork: "/sanctuary/forest_haven.PNG", unlocks: "Unlocks at 7 reflection days" },
+  { key: "blossom", label: "Blossom Garden", artwork: "/sanctuary/lotus_blossom.PNG", unlocks: "Unlocks at 14 reflection days" },
+  { key: "ocean", label: "Ocean Shore", artwork: "/sanctuary/ocean_calm.PNG", unlocks: "Unlocks at 21 reflection days" },
+  { key: "sunrise", label: "Sunrise Meadow", artwork: "/sanctuary/sunset_fields.PNG", unlocks: "Unlocks at 28 reflection days" },
+  { key: "mountain", label: "Mountain Retreat", artwork: "/sanctuary/mountain_peak.PNG", unlocks: "Bonus sanctuary" },
+  { key: "misty", label: "Misty Hollow", artwork: "/sanctuary/misty_meadows.PNG", unlocks: "Bonus sanctuary" },
 ] as const;
 
 const topFeatures = [
   { title: "Understand yourself over time", body: "Notice patterns you would not see on your own.", icon: "brain" as const },
   { title: "Grow one reflection at a time", body: "Just 60 seconds each day creates real change.", icon: "sprout" as const },
   { title: "Unlock peaceful sanctuaries", body: "Every reflection grows your world.", icon: "lotus" as const },
-  { title: "Private by design", body: "Your reflections stay yours. Always encrypted and secure.", icon: "lock" as const },
+  { title: "Private by design", body: "Your reflections stay private and are used only to provide Tranqly features.", icon: "lock" as const },
 ] as const;
 
 const workflow = [
@@ -274,7 +274,7 @@ function ThemesPhone() {
     <PhoneFrame>
       <div className="px-5 pb-5">
         <div className="flex items-center justify-between">
-          <p className="text-[1.55rem] font-semibold text-white">Sanctuary themes</p>
+          <p className="text-[1.55rem] font-semibold text-white">Sanctuaries</p>
           <span className="text-lg text-white/60">x</span>
         </div>
         <div className="mt-4 grid grid-cols-2 gap-3">
@@ -355,7 +355,7 @@ function ThemesMiniPhone() {
     <PhoneFrame className="max-w-[330px] scale-[0.75] origin-top">
       <div className="px-4 pb-4">
         <div className="flex items-center justify-between">
-          <p className="text-[14px] font-semibold text-white">Sanctuary themes</p>
+          <p className="text-[14px] font-semibold text-white">Sanctuaries</p>
           <span className="text-sm text-white/60">x</span>
         </div>
         <div className="mt-4 grid grid-cols-2 gap-2">
@@ -383,7 +383,7 @@ function CurvedArrow() {
   );
 }
 
-export default function ComingSoonLanding() {
+export default function ComingSoonLanding({ launchMode = false }: { launchMode?: boolean }) {
   const [previewImage, setPreviewImage] = useState<{ src: string; alt: string } | null>(null);
 
   return (
@@ -404,16 +404,16 @@ export default function ComingSoonLanding() {
               <a href="#features" className="transition hover:text-white">Features</a>
               <a href="#how-it-works" className="transition hover:text-white">How it works</a>
               <a href="#sanctuaries" className="transition hover:text-white">Sanctuaries</a>
-              <a href="#waitlist" className="rounded-[18px] bg-gradient-to-r from-[#8038f0] to-[#a855f7] px-7 py-4 font-semibold text-white shadow-[0_12px_30px_rgba(138,80,255,0.34)]">
-                Lock in $3.99/mo
-              </a>
+              <Link href={launchMode ? "/app" : "#waitlist"} className="rounded-[18px] bg-gradient-to-r from-[#8038f0] to-[#a855f7] px-7 py-4 font-semibold text-white shadow-[0_12px_30px_rgba(138,80,255,0.34)]">
+                {launchMode ? "Get started" : "Lock in $3.99/mo"}
+              </Link>
             </nav>
           </header>
 
           <section className="grid gap-10 xl:grid-cols-[0.82fr_1.18fr] xl:items-start">
             <div className="relative pt-6 xl:pt-10">
               <div className="inline-flex rounded-full border border-[#6f42af] bg-[#1a1328]/82 px-4 py-2 text-[12px] font-black uppercase tracking-[0.28em] text-[#d2a9ff]">
-                Launching soon
+                {launchMode ? "Tranqly is here" : "Launching soon"}
               </div>
               <h1 className="mt-6 max-w-[8.2ch] text-[4.3rem] font-black leading-[0.93] tracking-[-0.06em] text-white sm:text-[5rem] xl:text-[5.7rem]">
                 Your mind deserves a <span className="bg-gradient-to-r from-[#aa63ff] to-[#d28fff] bg-clip-text text-transparent">sanctuary.</span>
@@ -430,7 +430,7 @@ export default function ComingSoonLanding() {
                 ))}
               </div>
 
-              <GlassCard className="relative mt-8 max-w-[34rem] p-6">
+              <GlassCard id="pricing" className="relative mt-8 max-w-[34rem] p-6">
                 <div className="flex items-center gap-4">
                   <div className="relative grid h-12 w-12 place-items-center rounded-2xl bg-[#20152d] text-transparent">
                     <img src="/tranqly_logo.png" alt="" className="absolute h-8 w-8 object-contain" />
@@ -438,23 +438,35 @@ export default function ComingSoonLanding() {
                   </div>
                   <div>
                     <p className="text-[1.15rem] font-black uppercase tracking-[0.18em] text-[#d2a9ff]">
-                      Early Access Pricing
+                      {launchMode ? "Simple pricing" : "Early Access Pricing"}
                     </p>
-                    <p className="mt-2 text-[2.15rem] font-black text-[#ffd45c]">$3.99/mo for life</p>
-                    <p className="mt-1 text-[1.02rem] text-white/65">Locked in forever. Regular price becomes $5.99/mo after launch.</p>
+                    <p className="mt-2 text-[2.15rem] font-black text-[#ffd45c]">
+                      {launchMode ? "$5.99/month" : "$3.99/mo for life"}
+                    </p>
+                    <p className="mt-1 text-[1.02rem] text-white/65">
+                      {launchMode ? "$59.99/year. Cancel anytime." : "Locked in forever. Regular price becomes $5.99/mo after launch."}
+                    </p>
                   </div>
                 </div>
               </GlassCard>
 
-              <CurvedArrow />
+              {!launchMode ? <CurvedArrow /> : null}
 
-              <div className="mt-5 max-w-[34rem]">
-                <WaitlistSignup showFooterNote={false} />
-              </div>
-              <p className="mt-3 text-sm text-white/45">No spam. Just 1 email reminder.</p>
-              <p className="mt-1 max-w-[34rem] text-sm leading-6 text-white/52">
-                You&apos;ll only be charged when we launch. Cancel anytime. Spots are first-come, first-served.
-              </p>
+              {launchMode ? (
+                <Link href="/app" className="mt-5 inline-flex min-h-16 w-full max-w-[34rem] items-center justify-center rounded-full bg-gradient-to-r from-[#8f3fff] to-[#b15cff] px-9 text-base font-bold text-white shadow-[0_14px_40px_rgba(149,80,255,0.45)] transition hover:brightness-110">
+                  Get started
+                </Link>
+              ) : (
+                <>
+                  <div className="mt-5 max-w-[34rem]">
+                    <WaitlistSignup showFooterNote={false} />
+                  </div>
+                  <p className="mt-3 text-sm text-white/45">No spam. Just 1 email reminder.</p>
+                  <p className="mt-1 max-w-[34rem] text-sm leading-6 text-white/52">
+                    You&apos;ll only be charged when we launch. Cancel anytime. Spots are first-come, first-served.
+                  </p>
+                </>
+              )}
             </div>
 
             <div className="relative grid gap-8 xl:grid-cols-[0.34fr_0.66fr] xl:items-start">
@@ -634,11 +646,12 @@ export default function ComingSoonLanding() {
                   ))}
                 </ul>
                 <div className="rounded-[24px] border border-white/8 bg-white/[0.02] p-6 text-center">
-                  <p className="text-lg text-white/45 line-through">$5.99 / month</p>
-                  <p className="mt-3 text-[3.1rem] font-black text-white">$3.99</p>
+                  {!launchMode ? <p className="text-lg text-white/45 line-through">$5.99 / month</p> : null}
+                  <p className="mt-3 text-[3.1rem] font-black text-white">{launchMode ? "$5.99" : "$3.99"}</p>
                   <p className="text-[1.3rem] text-white/82">/ month</p>
-                  <p className="mt-2 text-[2rem] font-black text-white">for life</p>
-                  <p className="mt-4 text-sm text-white/48">Early access pricing. Limited time.</p>
+                  <p className="mt-2 text-[1.35rem] font-black text-white">{launchMode ? "or $59.99/year" : "for life"}</p>
+                  <p className="mt-4 text-sm text-white/48">{launchMode ? "Choose monthly or yearly in Tranqly Plus." : "Early access pricing. Limited time."}</p>
+                  {launchMode ? <Link href="/app" className="mt-5 inline-flex min-h-11 w-full items-center justify-center rounded-full bg-gradient-to-r from-[#8038f0] to-[#a855f7] px-5 text-sm font-bold text-white">Get started</Link> : null}
                 </div>
               </div>
             </GlassCard>
@@ -665,7 +678,7 @@ export default function ComingSoonLanding() {
             </GlassCard>
           </section>
 
-          <GlassCard id="waitlist" className="p-6">
+          {!launchMode ? <GlassCard id="waitlist" className="p-6">
             <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr] xl:items-center">
               <div className="flex items-start gap-4">
                 <div className="relative grid h-16 w-16 place-items-center rounded-full bg-[#22162f] shadow-[0_0_32px_rgba(142,78,255,0.24)]">
@@ -681,7 +694,7 @@ export default function ComingSoonLanding() {
                 <WaitlistSignup compact />
               </div>
             </div>
-          </GlassCard>
+          </GlassCard> : null}
 
           <footer className="flex flex-col items-center justify-between gap-4 px-2 pb-2 text-sm text-white/45 sm:flex-row">
             <p>© {new Date().getFullYear()} Tranqly. All rights reserved.</p>

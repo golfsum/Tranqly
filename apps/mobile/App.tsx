@@ -21,6 +21,7 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -56,6 +57,8 @@ interface CoachReply {
   message: string;
   nextStep: string;
   title?: string;
+  preview?: string;
+  nudgeLabel?: "A Gentle Next Step" | "Something to Try" | "A Question to Carry" | "Something to Notice" | "A Little Reassurance";
   pattern?: string;
   summary?: string;
   themes?: string[];
@@ -84,6 +87,25 @@ interface DeepInsight {
   suggestion: string;
   affirmation: string;
   createdAt: string;
+  isDemo?: boolean;
+  weekStart?: string;
+  weekEnd?: string;
+}
+
+function mobileWeeklyInsightKey(insight: DeepInsight) {
+  const date = new Date(insight.weekStart ?? insight.createdAt);
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() - date.getDay());
+  return insight.weekStart ?? date.toISOString().slice(0, 10);
+}
+
+function dedupeMobileWeeklyInsights(insights: DeepInsight[]) {
+  const byWeek = new Map<string, DeepInsight>();
+  for (const insight of [...insights].sort((a, b) => b.createdAt.localeCompare(a.createdAt))) {
+    const key = mobileWeeklyInsightKey(insight);
+    if (!byWeek.has(key)) byWeek.set(key, insight);
+  }
+  return [...byWeek.values()].slice(0, 52);
 }
 
 interface MobileAuthUser {
@@ -100,6 +122,7 @@ interface AppState {
   coachUsage?: { dateKey: string; count: number };
   moods: Record<string, string>;
   lastDeepInsight: DeepInsight | null;
+  weeklyInsights?: DeepInsight[];
   authUser?: MobileAuthUser | null;
   displayName?: string;
   sanctuaryTheme?: SanctuaryThemeKey;
@@ -206,7 +229,7 @@ const SANCTUARY_THEMES: {
 }[] = [
   {
     key: "blossom",
-    label: "Lotus Blossom",
+    label: "Blossom Garden",
     description: "A peaceful lotus pond where every reflection helps your sanctuary bloom.",
     feeling: "Peace, reflection, new beginnings",
     colors: ["#E7A6D8", "#BDA9FF"],
@@ -216,7 +239,7 @@ const SANCTUARY_THEMES: {
     artwork: require("./assets/images/sanctuary/lotus_blossom.png"),
     ambient: ["Floating petals", "Gentle ripples", "Fireflies", "Soft glow"],
     palette: ["Lavender", "Violet", "Sage", "Rose", "Mist"],
-    unlockDays: 0,
+    unlockDays: 14,
     free: true,
     unlockType: "reflections",
   },
@@ -232,13 +255,13 @@ const SANCTUARY_THEMES: {
     artwork: require("./assets/images/sanctuary/twilight_grove.png"),
     ambient: ["Twinkling stars", "Slow clouds", "Moon glow", "Fireflies"],
     palette: ["Midnight", "Indigo", "Silver", "Lavender", "Pine"],
-    unlockDays: 5,
+    unlockDays: 0,
     free: true,
     unlockType: "reflections",
   },
   {
     key: "ocean",
-    label: "Ocean Calm",
+    label: "Ocean Shore",
     description: "Gentle waves and endless horizons create space to breathe deeply, reset your thoughts, and let the tide carry away today's worries.",
     feeling: "Breathe, release, clarity",
     colors: ["#87B8C9", "#F2A58C"],
@@ -248,7 +271,7 @@ const SANCTUARY_THEMES: {
     artwork: require("./assets/images/sanctuary/ocean_calm.png"),
     ambient: ["Moving waves", "Ocean mist", "Flying birds", "Water shimmer"],
     palette: ["Ocean", "Teal", "Seafoam", "Coral", "Mist"],
-    unlockDays: 10,
+    unlockDays: 21,
     free: false,
     unlockType: "reflections",
   },
@@ -264,13 +287,13 @@ const SANCTUARY_THEMES: {
     artwork: require("./assets/images/sanctuary/forest_haven.png"),
     ambient: ["Birds", "Flowing stream", "Floating pollen", "Gentle breeze"],
     palette: ["Forest", "Moss", "Bark", "Lavender", "Sunlight"],
-    unlockDays: 15,
+    unlockDays: 7,
     free: false,
     unlockType: "reflections",
   },
   {
     key: "sunrise",
-    label: "Sunset Fields",
+    label: "Sunrise Meadow",
     description: "Golden fields beneath a colorful sunset remind you that every ending is also the beginning of something new.",
     feeling: "Gratitude, hope, closure",
     colors: ["#E5A65C", "#D989B2"],
@@ -280,13 +303,13 @@ const SANCTUARY_THEMES: {
     artwork: require("./assets/images/sanctuary/sunset_fields.png"),
     ambient: ["Swaying grass", "Birds", "Warm sunlight", "Floating seeds"],
     palette: ["Amber", "Peach", "Orange", "Pink", "Lavender"],
-    unlockDays: 20,
+    unlockDays: 28,
     free: false,
     unlockType: "reflections",
   },
   {
     key: "mountain",
-    label: "Mountain Peak",
+    label: "Mountain Retreat",
     description: "High above the clouds, each reflection reminds you how far you've climbed and how much you've grown.",
     feeling: "Strength, perspective, achievement",
     colors: ["#A9BFE8", "#D3B0FF"],
@@ -302,7 +325,7 @@ const SANCTUARY_THEMES: {
   },
   {
     key: "misty",
-    label: "Misty Meadow",
+    label: "Misty Hollow",
     description: "Soft morning mist rolls across blooming meadows where quiet paths encourage curiosity and peaceful reflection.",
     feeling: "Fresh start, possibility, gentleness",
     colors: ["#B2C8B3", "#B8A7DF"],
@@ -318,7 +341,7 @@ const SANCTUARY_THEMES: {
   },
   {
     key: "desert",
-    label: "Desert Dusk",
+    label: "Desert Oasis",
     description: "Wide open skies and quiet desert landscapes invite you to slow down, breathe deeply, and appreciate life's quiet moments.",
     feeling: "Stillness, simplicity, resilience",
     colors: ["#D17A52", "#B583C7"],
@@ -334,7 +357,7 @@ const SANCTUARY_THEMES: {
   },
   {
     key: "snowfall",
-    label: "Snowfall Retreat",
+    label: "Winter Retreat",
     description: "Fresh snow blankets a peaceful winter retreat where the world slows down and every reflection feels warm and comforting.",
     feeling: "Quiet, comfort, peace",
     colors: ["#B7D7F0", "#D6C7FF"],
@@ -350,7 +373,7 @@ const SANCTUARY_THEMES: {
   },
   {
     key: "northern",
-    label: "Northern Lights",
+    label: "Aurora Valley",
     description: "Watch colorful auroras dance across the night sky while reflecting on life's beauty and endless possibilities.",
     feeling: "Wonder, awe, inspiration",
     colors: ["#6EE7B7", "#B879FF"],
@@ -630,6 +653,7 @@ function topStruggleSummary(entries: CheckIn[]) {
 const VOICE_LIMIT_SECONDS = 60;
 const TRANSCRIBE_TIMEOUT_MS = 25000;
 const COACH_TIMEOUT_MS = 30000;
+const DEMO_ID_PREFIX = "tranqly-demo-";
 
 function todayKey() {
   const d = new Date();
@@ -700,6 +724,309 @@ function localDeepInsight(text: string): DeepInsight {
   };
 }
 
+type DemoEntrySeed = {
+  daysAgo: number;
+  time: string;
+  text: string;
+  prompt: string;
+  summary: string;
+  message: string;
+  nextStep: string;
+  pattern: string;
+  tags: string[];
+  tone: string;
+  source: "voice" | "typed";
+  mood: string;
+};
+
+const DEMO_ENTRIES: DemoEntrySeed[] = [
+  {
+    daysAgo: 0,
+    time: "08:14",
+    text: "I actually got some sleep last night and I did not feel like I needed to sleep in. I had enough energy to make breakfast before work.",
+    prompt: "What felt easier than expected?",
+    summary: "Better sleep changed the tone of the morning.",
+    message:
+      "Getting real sleep changed the tone of today. The important detail is not just that you rested, it is that your body did not feel like it needed to recover as hard this morning.",
+    nextStep: "Notice what helped you sleep better last night. That detail may be worth repeating.",
+    pattern: "Sleep may be tied closely to your morning energy and how much space the day feels like it has.",
+    tags: ["sleep", "energy", "calm"],
+    tone: "rested and clear",
+    source: "voice",
+    mood: "good",
+  },
+  {
+    daysAgo: 1,
+    time: "18:42",
+    text: "I had a job interview today. I was nervous, but I prepared more than I usually do and felt proud that I showed up.",
+    prompt: "What took courage today?",
+    summary: "You showed up for a new opportunity.",
+    message:
+      "You took a step toward something new today. The nerves make sense, but the stronger signal is that you prepared and still showed up.",
+    nextStep: "Before bed, write down one answer from the interview that you handled well.",
+    pattern: "You tend to move forward even when uncertainty is present.",
+    tags: ["work", "growth", "courage"],
+    tone: "nervous but proud",
+    source: "typed",
+    mood: "good",
+  },
+  {
+    daysAgo: 2,
+    time: "20:05",
+    text: "Work felt packed with meetings. I took a short walk outside after lunch and it helped me reset before the afternoon.",
+    prompt: "What helped you feel steadier?",
+    summary: "Outside time helped you reset during a busy workday.",
+    message:
+      "The walk mattered. It gave your day a small break point instead of letting the meetings blur together.",
+    nextStep: "Try protecting one ten minute reset tomorrow, even if the day gets busy.",
+    pattern: "Outside time keeps showing up as a reliable way to clear your head.",
+    tags: ["work", "nature", "calm"],
+    tone: "busy but grounded",
+    source: "voice",
+    mood: "okay",
+  },
+  {
+    daysAgo: 3,
+    time: "21:16",
+    text: "I felt irritated most of the afternoon. I think I was hungry and trying to keep pushing instead of pausing.",
+    prompt: "What felt heavy today?",
+    summary: "You noticed a basic need underneath irritation.",
+    message:
+      "You caught something useful today. The irritation was not random, it may have been your body asking for a pause before your mind had words for it.",
+    nextStep: "Tomorrow, check in with food and water before you label the day as bad.",
+    pattern: "Physical needs may be affecting your mood more than they first appear.",
+    tags: ["stress", "health", "awareness"],
+    tone: "irritated but reflective",
+    source: "typed",
+    mood: "meh",
+  },
+  {
+    daysAgo: 4,
+    time: "19:33",
+    text: "I called my sister after dinner. We laughed about something small and I realized I had been needing that kind of easy conversation.",
+    prompt: "What gave you energy today?",
+    summary: "Easy family connection lifted your evening.",
+    message:
+      "That conversation gave you something simple and real. It sounds like connection helped the day feel lighter without needing to fix everything.",
+    nextStep: "Send a short message this week to someone who helps you feel like yourself.",
+    pattern: "Family connection often brings your language back toward ease and humor.",
+    tags: ["family", "gratitude", "energy"],
+    tone: "connected and lighter",
+    source: "voice",
+    mood: "amazing",
+  },
+  {
+    daysAgo: 5,
+    time: "07:55",
+    text: "I woke up thinking about everything I needed to do. I wrote a short list and only picked three things. That helped.",
+    prompt: "What made the day feel manageable?",
+    summary: "Choosing fewer priorities made the morning calmer.",
+    message:
+      "You made the day smaller in a good way. Picking three things gave your attention somewhere to land.",
+    nextStep: "Use the same three item list tomorrow morning before the day starts making noise.",
+    pattern: "You seem calmer when you reduce the day to a few clear next steps.",
+    tags: ["work", "calm", "focus"],
+    tone: "focused and practical",
+    source: "typed",
+    mood: "okay",
+  },
+  {
+    daysAgo: 6,
+    time: "20:48",
+    text: "I was grateful for dinner at home tonight. Nothing big happened, but it felt peaceful to not rush anywhere.",
+    prompt: "What are you grateful for today?",
+    summary: "A quiet evening at home felt restorative.",
+    message:
+      "This is the kind of detail worth keeping. A peaceful dinner may look ordinary, but it gave your system a slower ending to the day.",
+    nextStep: "Notice one small home routine that makes evenings feel easier.",
+    pattern: "Gratitude appears most clearly when the day slows down.",
+    tags: ["gratitude", "home", "calm"],
+    tone: "peaceful and appreciative",
+    source: "typed",
+    mood: "good",
+  },
+  {
+    daysAgo: 7,
+    time: "17:58",
+    text: "I spent time outside after work and felt my shoulders drop. I forget how much being near trees helps.",
+    prompt: "What helped you feel calm today?",
+    summary: "Time near trees helped your body relax.",
+    message:
+      "Your body gave you a clear signal today. Being outside did not solve everything, but it helped your shoulders let go.",
+    nextStep: "If tomorrow feels tight, step outside before you try to push through.",
+    pattern: "Nature keeps appearing as a calming cue in your reflections.",
+    tags: ["nature", "calm", "body"],
+    tone: "relieved and grounded",
+    source: "voice",
+    mood: "good",
+  },
+  {
+    daysAgo: 8,
+    time: "22:02",
+    text: "I stayed up too late again scrolling. I felt tired today and noticed I was less patient with people.",
+    prompt: "What would you like to let go of today?",
+    summary: "Late scrolling seemed connected to lower patience.",
+    message:
+      "You noticed a connection that matters. The late night did not just affect sleep, it changed how much patience you had available today.",
+    nextStep: "Put the phone across the room for the first ten minutes after getting into bed.",
+    pattern: "Sleep and patience seem connected for you.",
+    tags: ["sleep", "stress", "habit"],
+    tone: "tired and honest",
+    source: "typed",
+    mood: "rough",
+  },
+  {
+    daysAgo: 9,
+    time: "18:27",
+    text: "I finished the project draft I had been avoiding. It was not perfect, but it is finally moving.",
+    prompt: "What is one thing you are proud of?",
+    summary: "You moved an avoided project forward.",
+    message:
+      "You broke the freeze today. The win is not perfection, it is that the project is moving again.",
+    nextStep: "Name the next smallest piece of the project before you stop for the night.",
+    pattern: "Progress starts for you when the goal becomes smaller and more concrete.",
+    tags: ["work", "growth", "win"],
+    tone: "proud and relieved",
+    source: "typed",
+    mood: "good",
+  },
+  {
+    daysAgo: 10,
+    time: "21:10",
+    text: "I felt a little lonely tonight, but I made tea and sat quietly instead of trying to distract myself right away.",
+    prompt: "What else is on your mind?",
+    summary: "You stayed present with a lonely feeling.",
+    message:
+      "You gave yourself company tonight. Making tea and sitting quietly was a gentle way of not abandoning the feeling.",
+    nextStep: "Let tomorrow include one small point of contact, even a short text.",
+    pattern: "When evenings feel lonely, quiet rituals help you stay steady.",
+    tags: ["reflection", "calm", "relationships"],
+    tone: "lonely but tender",
+    source: "voice",
+    mood: "meh",
+  },
+  {
+    daysAgo: 11,
+    time: "07:42",
+    text: "I exercised before work. It was only twenty minutes, but I noticed I was less tense during the first meeting.",
+    prompt: "What gave you energy today?",
+    summary: "A short workout helped reduce morning tension.",
+    message:
+      "Twenty minutes was enough to change the texture of your morning. That is useful information, especially before work starts asking for so much.",
+    nextStep: "Repeat the smallest version of this, not the perfect version.",
+    pattern: "Movement before work may help lower the tension you carry into meetings.",
+    tags: ["exercise", "work", "energy"],
+    tone: "energized and steady",
+    source: "typed",
+    mood: "good",
+  },
+  {
+    daysAgo: 12,
+    time: "19:05",
+    text: "I had dinner with friends. I laughed more than I expected and came home feeling lighter.",
+    prompt: "What made you smile today?",
+    summary: "Time with friends made the day feel lighter.",
+    message:
+      "That laughter stands out. It sounds like being around people who feel easy helped you come back to yourself.",
+    nextStep: "Save this as evidence that connection can change the whole tone of a day.",
+    pattern: "Unforced social time often leaves you feeling lighter.",
+    tags: ["relationships", "gratitude", "calm"],
+    tone: "light and grateful",
+    source: "voice",
+    mood: "amazing",
+  },
+  {
+    daysAgo: 13,
+    time: "20:21",
+    text: "The day was messy, but I still checked in. I do not have a big takeaway. I just want to keep showing up.",
+    prompt: "What do you want to remember from today?",
+    summary: "You checked in even without a big takeaway.",
+    message:
+      "This is still a real reflection. Some days do not hand you a lesson, but showing up keeps the thread intact.",
+    nextStep: "Keep the bar low tomorrow. One honest sentence is enough.",
+    pattern: "Consistency matters to you even when the day feels unclear.",
+    tags: ["consistency", "reflection", "growth"],
+    tone: "steady and honest",
+    source: "typed",
+    mood: "okay",
+  },
+];
+
+function dateForDemo(daysAgo: number, time: string) {
+  const date = new Date();
+  date.setDate(date.getDate() - daysAgo);
+  const [hours, minutes] = time.split(":").map(Number);
+  date.setHours(hours, minutes, 0, 0);
+  return date;
+}
+
+function dateKeyOfDate(date: Date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function demoReply(seed: DemoEntrySeed, createdAt: string): CoachReply {
+  return {
+    title: "Today I noticed...",
+    preview: seed.summary,
+    nudgeLabel: "Something to Notice",
+    message: seed.message,
+    nextStep: seed.nextStep,
+    pattern: seed.pattern,
+    summary: seed.summary,
+    themes: seed.tags,
+    tags: seed.tags,
+    emotionalTone: seed.tone,
+    followUpQuestions: ["What helped shape that moment today?"],
+    source: "ai",
+    createdAt,
+  };
+}
+
+function buildDemoCheckIns(): CheckIn[] {
+  return DEMO_ENTRIES.map((seed, index) => {
+    const date = dateForDemo(seed.daysAgo, seed.time);
+    const createdAt = date.toISOString();
+    return {
+      id: `${DEMO_ID_PREFIX}${index}`,
+      text: seed.text,
+      createdAt,
+      dateKey: dateKeyOfDate(date),
+      source: seed.source,
+      prompt: seed.prompt,
+      promptType: "demo_personalized",
+      promptWhy: "Demo data shows how Tranqly can learn from patterns over time.",
+      reply: demoReply(seed, createdAt),
+    };
+  }).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+function buildDemoMoods() {
+  const moods: Record<string, string> = {};
+  for (const seed of DEMO_ENTRIES) {
+    moods[dateKeyOfDate(dateForDemo(seed.daysAgo, seed.time))] = seed.mood;
+  }
+  return moods;
+}
+
+function buildDemoDeepInsight(): DeepInsight {
+  return {
+    headline: "Your week got steadier when you slowed down",
+    insight:
+      "Across this demo week, sleep, outside time, and smaller work goals kept showing up before calmer reflections. When the day had a pause point, your language became clearer and more grounded.",
+    suggestion:
+      "This week, try one ten minute reset before the busiest part of the day. Keep it small enough that it still works on a messy day.",
+    affirmation: "You do not need a perfect routine to understand what helps you.",
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function isDemoCheckIn(entry: CheckIn) {
+  return entry.id.startsWith(DEMO_ID_PREFIX);
+}
+
 function localCoachReply(text: string): CoachReply {
   const lower = text.toLowerCase();
   const betterSleep = /got some sleep|slept better|slept well|good sleep|rested|didn't need to sleep in|did not need to sleep in/.test(lower);
@@ -711,8 +1038,8 @@ function localCoachReply(text: string): CoachReply {
   if (betterSleep) {
     return {
       message:
-        "Getting real sleep changed the tone of today. The important detail is not just that you rested, it is that your body did not feel like it needed to recover as hard this morning.",
-      title: "Today I noticed...",
+        "Getting real sleep changed the tone of today. You noticed that the morning felt easier instead of brushing past the difference, which gives you something useful to remember.",
+      title: "Rest gave today more room",
       pattern: "Sleep may be tied closely to your morning energy and how much space the day feels like it has.",
       summary: "Better sleep made today feel easier to enter.",
       themes: ["sleep", "energy"],
@@ -728,15 +1055,15 @@ function localCoachReply(text: string): CoachReply {
   if (noSleep) {
     return {
       message:
-        "Not sleeping changes the whole shape of a day. What stands out is that you still checked in instead of brushing past it, and that tells me you are paying attention to what your body is asking for.",
-      title: "Today I noticed...",
+        "A disrupted night can change the whole shape of a day. You still made space to notice how it affected you instead of simply pushing through, and that awareness is useful.",
+      title: "You noticed instead of pushing through",
       pattern: "Sleep may be one of the first places your energy pattern shows up.",
       summary: "Sleep was difficult, and you still checked in.",
       themes: ["sleep", "energy"],
       tags: ["rest"],
       emotionalTone: "tired but reflective",
       followUpQuestions: ["What helped you get through the day?"],
-      nextStep: "Keep tonight simple. Lower the lights, put the phone down early, and aim for rest rather than a perfect routine.",
+      nextStep: "If tonight allows, keep one part of your wind-down familiar while the rest of the routine settles.",
       source: "local",
       createdAt: new Date().toISOString(),
     };
@@ -746,7 +1073,7 @@ function localCoachReply(text: string): CoachReply {
     return {
       message:
         "This sounds like a low-energy day, not a failed one. You noticed your limits, and that matters because patterns usually start showing up through tired days first.",
-      title: "Today I noticed...",
+      title: "You made room for a tired day",
       pattern: "Low-energy days may be worth tracking alongside what helped you recover.",
       summary: "Energy felt low today.",
       themes: ["energy", "recovery"],
@@ -763,7 +1090,7 @@ function localCoachReply(text: string): CoachReply {
     return {
       message:
         "There is pressure in what you shared, but also a useful signal. Tranqly is starting to learn what tends to take up space for you, and naming it is the first step toward changing your relationship with it.",
-      title: "Today I noticed...",
+      title: "You named what took up space",
       pattern: "Stress may be connected to the parts of the day that feel least spacious.",
       summary: "Stress showed up in today's reflection.",
       themes: ["stress", "pressure"],
@@ -780,7 +1107,7 @@ function localCoachReply(text: string): CoachReply {
     return {
       message:
         "A job interview is not just an event on the calendar. It is a moment where you put yourself forward, tolerate uncertainty, and take a step toward a possible change.",
-      title: "Today I noticed...",
+      title: "You moved toward something new",
       pattern: "Opportunity and nerves may show up together when you are moving toward something new.",
       summary: "You took a step toward a new opportunity.",
       themes: ["work", "growth"],
@@ -796,14 +1123,14 @@ function localCoachReply(text: string): CoachReply {
   return {
     message:
       `You named something specific from today: "${text.slice(0, 120)}${text.length > 120 ? "..." : ""}" That gives Tranqly a real signal to learn from, especially as details like this repeat over time.`,
-    title: "Today I noticed...",
+    title: "One detail was worth noticing",
     pattern: "Specific details are where your longer-term patterns will start to become visible.",
     summary: text.slice(0, 140),
     themes: ["reflection"],
     tags: ["daily check-in"],
     emotionalTone: "reflective",
     followUpQuestions: ["What part of today do you want to understand better?"],
-    nextStep: "Add one sentence about how this felt in your body or mood. That is usually where the useful pattern begins.",
+    nextStep: "If it helps, add one sentence about what this changed for you. That is often where the useful detail appears.",
     source: "local",
     createdAt: new Date().toISOString(),
   };
@@ -984,6 +1311,17 @@ function selectMobilePrompt(
     candidates[candidates.length - 1];
 
   return selected;
+}
+
+function safeLocalCoachReply(text: string): CoachReply {
+  const reply = localCoachReply(text);
+  return {
+    ...reply,
+    title: reply.title?.slice(0, 55) || "One detail was worth noticing",
+    preview: (reply.summary === reply.title ? reply.message : reply.summary || reply.message).slice(0, 125),
+    nudgeLabel: "Something to Notice",
+    pattern: undefined,
+  };
 }
 
 function greetingForNow() {
@@ -1255,6 +1593,33 @@ function getSanctuaryTheme(key: SanctuaryThemeKey) {
   return SANCTUARY_THEMES.find((theme) => theme.key === key) || SANCTUARY_THEMES[0];
 }
 
+const PRIMARY_SANCTUARY_KEYS: SanctuaryThemeKey[] = ["twilight", "forest", "blossom", "ocean", "sunrise"];
+
+function qualifyingReflectionDays(entries: CheckIn[]) {
+  return new Set(
+    entries
+      .filter((entry) => {
+        const id = entry.id.toLowerCase();
+        return Boolean(entry.dateKey) && !id.includes("demo") && !id.includes("admin-test");
+      })
+      .map((entry) => entry.dateKey)
+  ).size;
+}
+
+function currentWeekReflectionDays(entries: CheckIn[]) {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - start.getDay());
+  return new Set(
+    entries
+      .filter((entry) => {
+        const id = entry.id.toLowerCase();
+        return Boolean(entry.dateKey) && !id.includes("demo") && !id.includes("admin-test") && new Date(entry.createdAt) >= start;
+      })
+      .map((entry) => entry.dateKey)
+  ).size;
+}
+
 function isThemeUnlocked(theme: (typeof SANCTUARY_THEMES)[number], checkInCount: number, premium = false) {
   if (theme.unlockType === "plus") return premium;
   if (theme.unlockType === "seasonal") return false;
@@ -1262,8 +1627,7 @@ function isThemeUnlocked(theme: (typeof SANCTUARY_THEMES)[number], checkInCount:
 }
 
 function nextThemeUnlock(checkInCount: number, premium = false) {
-  return [...SANCTUARY_THEMES]
-    .filter((theme) => theme.unlockType !== "seasonal")
+  return PRIMARY_SANCTUARY_KEYS.map(getSanctuaryTheme)
     .sort((a, b) => a.unlockDays - b.unlockDays)
     .find((theme) => theme.unlockType === "reflections" && !isThemeUnlocked(theme, checkInCount, premium)) ?? null;
 }
@@ -1281,7 +1645,7 @@ function themeProgressLabel(theme: (typeof SANCTUARY_THEMES)[number], checkInCou
   if (isThemeUnlocked(theme, checkInCount, premium)) return "Unlocked";
   if (theme.unlockType === "plus") return "Tranqly Plus";
   if (theme.unlockType === "seasonal") return "Seasonal theme";
-  return `Unlocks at ${theme.unlockDays} reflections`;
+  return `Unlocks at ${theme.unlockDays} reflection days`;
 }
 
 function growthNoticeFor(previousCount: number, nextCount: number) {
@@ -2595,6 +2959,7 @@ export default function App() {
   });
   const [moods, setMoods] = useState<Record<string, string>>({});
   const [lastDeepInsight, setLastDeepInsight] = useState<DeepInsight | null>(null);
+  const [weeklyInsights, setWeeklyInsights] = useState<DeepInsight[]>([]);
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettings>(DEFAULT_NOTIFICATION_SETTINGS);
   const [sanctuaryUnlockNotifications, setSanctuaryUnlockNotifications] = useState<Record<string, string | null>>({});
   const [authUser, setAuthUser] = useState<MobileAuthUser | null>(null);
@@ -2604,7 +2969,11 @@ export default function App() {
   const [authBusy, setAuthBusy] = useState(false);
   const [authNotice, setAuthNotice] = useState("");
   const [coachModal, setCoachModal] = useState<{ text: string; reply: CoachReply } | null>(null);
+  const [responseFeedbackOpen, setResponseFeedbackOpen] = useState(false);
+  const [responseFeedbackText, setResponseFeedbackText] = useState("");
+  const [responseFeedbackHistory, setResponseFeedbackHistory] = useState<{ helpful: boolean; reason?: string; detail?: string; createdAt: string }[]>([]);
   const [showJourneyDeepInsight, setShowJourneyDeepInsight] = useState(false);
+  const [selectedWeeklyInsight, setSelectedWeeklyInsight] = useState<DeepInsight | null>(null);
   const [displayName, setDisplayName] = useState("");
   const [onboardingName, setOnboardingName] = useState("");
   const [onboardingStep, setOnboardingStep] = useState<"intro" | "name">("intro");
@@ -2623,6 +2992,7 @@ export default function App() {
   const [showThemePicker, setShowThemePicker] = useState(false);
   const [sanctuaryDetailTheme, setSanctuaryDetailTheme] = useState<SanctuaryThemeKey>("twilight");
   const [growthNotice, setGrowthNotice] = useState("");
+  const [newlyUnlockedSanctuary, setNewlyUnlockedSanctuary] = useState<SanctuaryThemeKey | null>(null);
   const [showNotificationPrompt, setShowNotificationPrompt] = useState(false);
   const [notificationsExpanded, setNotificationsExpanded] = useState(false);
   const [notificationDraft, setNotificationDraft] = useState<NotificationSettings>(DEFAULT_NOTIFICATION_SETTINGS);
@@ -2639,6 +3009,7 @@ export default function App() {
           setCoachUsage(parsed.coachUsage || { dateKey: todayKey(), count: 0 });
           setMoods(parsed.moods || {});
           setLastDeepInsight(parsed.lastDeepInsight || null);
+          setWeeklyInsights(dedupeMobileWeeklyInsights(parsed.weeklyInsights?.length ? parsed.weeklyInsights : parsed.lastDeepInsight ? [parsed.lastDeepInsight] : []));
           setNotificationSettings({ ...DEFAULT_NOTIFICATION_SETTINGS, ...(parsed.notificationSettings || {}) });
           setSanctuaryUnlockNotifications(parsed.sanctuaryUnlockNotifications || {});
           setAuthUser(parsed.authUser || null);
@@ -2657,6 +3028,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    AsyncStorage.getItem("tranqly-response-feedback").then((raw) => {
+      if (raw) try { setResponseFeedbackHistory(JSON.parse(raw)); } catch {}
+    });
+  }, []);
+
+  useEffect(() => {
     setNotificationDraft(notificationSettings);
   }, [notificationSettings]);
 
@@ -2667,6 +3044,7 @@ export default function App() {
       coachUsage,
       moods,
       lastDeepInsight,
+      weeklyInsights,
       notificationSettings,
       sanctuaryUnlockNotifications,
       authUser,
@@ -2685,6 +3063,7 @@ export default function App() {
     coachUsage,
     moods,
     lastDeepInsight,
+    weeklyInsights,
     notificationSettings,
     sanctuaryUnlockNotifications,
     authUser,
@@ -2898,8 +3277,11 @@ export default function App() {
     }
   }
 
-  const { height: screenHeight } = useWindowDimensions();
-  const shortLayout = screenHeight < 700;
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+  const compactWidth = screenWidth < 390;
+  const densityMode: "compact" | "regular" | "comfortable" = screenHeight < 650 ? "compact" : screenHeight <= 780 ? "regular" : "comfortable";
+  const shortLayout = densityMode === "compact";
+  const micDiameter = densityMode === "compact" ? 104 : densityMode === "regular" ? 126 : 146;
   const micPulse = useRef(new Animated.Value(1)).current;
   const recordingStoppingRef = useRef(false);
   const promptSelection = selectMobilePrompt(checkIns, sanctuaryTheme, moods[todayKey()] || null, promptOffset);
@@ -3002,7 +3384,9 @@ export default function App() {
       promptWhy: promptSelection.whyThisQuestion,
     };
 
-    const notice = growthNoticeFor(checkIns.length, checkIns.length + 1);
+    const previousReflectionDays = qualifyingReflectionDays(checkIns);
+    const nextReflectionDays = qualifyingReflectionDays([entry, ...checkIns]);
+    const notice = growthNoticeFor(previousReflectionDays, nextReflectionDays);
     if (notice) {
       setGrowthNotice(`Your sanctuary has grown. ${notice}`);
       setTimeout(() => setGrowthNotice(""), 4500);
@@ -3019,9 +3403,13 @@ export default function App() {
     const unlockedTheme = sanctuaryThemesByUnlock().find(
       (theme) =>
         theme.unlockType === "reflections" &&
-        checkIns.length < theme.unlockDays &&
-        checkIns.length + 1 >= theme.unlockDays
+        previousReflectionDays < theme.unlockDays &&
+        nextReflectionDays >= theme.unlockDays
     );
+    if (unlockedTheme) {
+      setNewlyUnlockedSanctuary(unlockedTheme.key);
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    }
     if (
       unlockedTheme &&
       notificationSettings.sanctuaryUnlockEnabled &&
@@ -3092,12 +3480,15 @@ export default function App() {
             .slice(0, 10)
             .map((c) => ({ prompt: c.prompt, promptType: c.promptType, promptWhy: c.promptWhy }))
             .filter((item) => item.prompt),
+          recentHelpfulFeedback: responseFeedbackHistory.slice(0, 5),
           currentSanctuary: sanctuaryTheme,
           userPlan: premium ? "plus" : "free",
           history: checkIns,
           recentEntries: checkIns.slice(0, 10).map((c) => ({
             text: c.text,
             dateKey: c.dateKey,
+            previousInsight: c.reply?.message,
+            tags: c.reply?.tags ?? c.reply?.themes,
           })),
         }),
       });
@@ -3111,6 +3502,7 @@ export default function App() {
           blocked: data.blocked,
           source: data.source,
           error: data.error,
+          failureReason: data.failureReason,
           title: data.title,
         });
         if (data.fallback) {
@@ -3125,11 +3517,13 @@ export default function App() {
           });
         }
         entry.reply = data.fallback
-          ? localCoachReply(trimmed)
+          ? safeLocalCoachReply(trimmed)
           : {
               message: data.message || "",
               nextStep: data.nextStep || "",
               title: data.title,
+              preview: data.preview,
+              nudgeLabel: data.nudgeLabel,
               pattern: data.pattern,
               summary: data.summary,
               themes: data.themes,
@@ -3149,7 +3543,7 @@ export default function App() {
           durationMs: Date.now() - coachStartedAt,
           route: "/api/coach",
         });
-        entry.reply = localCoachReply(trimmed);
+        entry.reply = safeLocalCoachReply(trimmed);
       }
     } catch (err) {
       console.warn("Coach request failed", err);
@@ -3162,7 +3556,7 @@ export default function App() {
       });
       setComposerError("Insight took too long. Your reflection was saved, try again in a moment.");
       setTimeout(() => setComposerError(""), 5000);
-      entry.reply = localCoachReply(trimmed);
+      entry.reply = safeLocalCoachReply(trimmed);
     }
 
     if (entry.reply) {
@@ -3171,6 +3565,7 @@ export default function App() {
 
     const di: DeepInsight = localDeepInsight(trimmed);
     setLastDeepInsight(di);
+    setWeeklyInsights((current) => dedupeMobileWeeklyInsights([di, ...current]));
 
     setCheckIns((prev) => prev.map((c) => c.id === entry.id ? entry : c));
     setPending(false);
@@ -3250,11 +3645,50 @@ export default function App() {
   }
 
   function openCoachModal(entryText: string, reply: CoachReply) {
+    setResponseFeedbackOpen(false);
     setCoachModal({ text: entryText, reply });
+  }
+
+  function saveMobileResponseFeedback(helpful: boolean, reason?: string) {
+    const next = [{ helpful, reason, detail: responseFeedbackText.trim() || undefined, createdAt: new Date().toISOString() }, ...responseFeedbackHistory].slice(0, 100);
+    setResponseFeedbackHistory(next);
+    void AsyncStorage.setItem("tranqly-response-feedback", JSON.stringify(next));
   }
 
   function deleteCheckIn(id: string) {
     setCheckIns((prev) => prev.filter((c) => c.id !== id));
+  }
+
+  function addDemoData() {
+    const demoCheckIns = buildDemoCheckIns();
+    const realCheckIns = checkIns.filter((entry) => !isDemoCheckIn(entry));
+    setCheckIns([...demoCheckIns, ...realCheckIns].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
+    setMoods((current) => ({ ...buildDemoMoods(), ...current }));
+    const demoWeeklyInsight = { ...buildDemoDeepInsight(), isDemo: true };
+    setLastDeepInsight(demoWeeklyInsight);
+    setWeeklyInsights((current) => dedupeMobileWeeklyInsights([demoWeeklyInsight, ...current.filter((item) => !item.isDemo)]));
+    setSanctuaryTheme("twilight");
+    setDraftSanctuaryTheme("twilight");
+    setGrowthNotice("Demo data added. Journey now shows sample patterns and weekly insight progress.");
+    setTimeout(() => setGrowthNotice(""), 4500);
+  }
+
+  function removeDemoData() {
+    const demoDateKeys = new Set(buildDemoCheckIns().map((entry) => entry.dateKey));
+    const remainingCheckIns = checkIns.filter((entry) => !isDemoCheckIn(entry));
+    const remainingDateKeys = new Set(remainingCheckIns.map((entry) => entry.dateKey));
+    setCheckIns(remainingCheckIns);
+    setMoods((current) => {
+      const next = { ...current };
+      for (const dateKey of demoDateKeys) {
+        if (!remainingDateKeys.has(dateKey)) delete next[dateKey];
+      }
+      return next;
+    });
+    setLastDeepInsight((current) => current?.isDemo ? null : current);
+    setWeeklyInsights((current) => current.filter((item) => !item.isDemo));
+    setGrowthNotice("Demo data removed. Your real reflections were kept.");
+    setTimeout(() => setGrowthNotice(""), 4500);
   }
 
   function openPremium() {
@@ -3342,6 +3776,15 @@ export default function App() {
   }
 
   const streak = currentStreak(checkIns);
+  const totalReflectionDays = qualifyingReflectionDays(checkIns);
+  const weeklyReflectionDays = Math.min(7, currentWeekReflectionDays(checkIns));
+  const notificationStatusLabel = notificationSettings.permissionStatus === "unknown"
+    ? "Permission Needed"
+    : notificationSettings.permissionStatus === "denied"
+      ? "Off"
+      : notificationSettings.dailyReminderEnabled || notificationSettings.weeklyInsightEnabled || notificationSettings.sanctuaryUnlockEnabled
+        ? "On"
+        : "Off";
   const best = bestStreak(checkIns);
   const latestToday = checkIns.find((c) => c.dateKey === todayKey() && c.reply);
   const showSubmittedCoach = Boolean(latestToday?.reply && !pending);
@@ -3349,15 +3792,16 @@ export default function App() {
   const firstName = displayName.trim().split(/\s+/)[0];
   const selectedSanctuary = getSanctuaryTheme(sanctuaryTheme);
   const detailSanctuary = getSanctuaryTheme(sanctuaryDetailTheme);
-  const upcomingSanctuary = nextThemeUnlock(checkIns.length, premium);
+  const upcomingSanctuary = nextThemeUnlock(totalReflectionDays, premium);
   const reflectionsToNextSanctuary = upcomingSanctuary
-    ? Math.max(0, upcomingSanctuary.unlockDays - checkIns.length)
+    ? Math.max(0, upcomingSanctuary.unlockDays - totalReflectionDays)
     : 0;
   const detailSanctuaryReflectionCount = detailSanctuary.unlockType === "reflections"
-    ? Math.max(0, checkIns.length - detailSanctuary.unlockDays)
-    : checkIns.length;
+    ? Math.max(0, totalReflectionDays - detailSanctuary.unlockDays)
+    : totalReflectionDays;
   const appTheme = APP_THEME_PALETTES[sanctuaryTheme] || APP_THEME_PALETTES.twilight;
   const reminderSuggestion = adaptiveSuggestion(notificationSettings);
+  const hasDemoData = checkIns.some(isDemoCheckIn);
   const voiceProgress = Math.min(1, voiceElapsed / VOICE_LIMIT_SECONDS);
   const composerStatus = composerError
     ? composerError
@@ -3398,6 +3842,11 @@ export default function App() {
   const themedMuted = { color: appTheme.faint };
   const themedAccent = { color: appTheme.accent };
   const themedAccent2 = { color: appTheme.accent2 };
+  const coachPatternEvidence = coachModal
+    ? Math.max(1, checkIns.filter((entry) => (coachModal.reply.tags ?? coachModal.reply.themes ?? []).some((tag) => entry.text.toLowerCase().includes(tag.toLowerCase()))).length)
+    : 1;
+  const coachStepLabels = ["One Gentle Step", "A Question to Carry", "Something to Notice", "No Action Needed Today"];
+  const coachStepLabel = coachModal ? coachModal.reply.nudgeLabel ?? coachStepLabels[coachModal.text.length % coachStepLabels.length] : coachStepLabels[0];
 
   return (
     <SafeAreaProvider style={[styles.appRoot, { backgroundColor: appTheme.bg }]}>
@@ -3523,6 +3972,7 @@ export default function App() {
         >
           {tab === "coach" ? (
             <ScrollView
+              testID="insights-scroll"
               style={styles.fitCoachScroll}
               contentContainerStyle={styles.fitCoachShell}
               keyboardShouldPersistTaps="never"
@@ -3560,21 +4010,25 @@ export default function App() {
               {showSubmittedCoach && latestToday?.reply ? (
                 <>
                 <View style={[styles.fitSubmittedCard, { backgroundColor: appTheme.card, borderColor: appTheme.edge }, shortLayout && styles.fitSubmittedCardShort]}>
-                  <Text style={[styles.fitKicker, { color: appTheme.accent2 }]}>Today&apos;s Reflection</Text>
-                  <View style={styles.fitPromptBlock}>
-                    <Text style={[styles.fitPromptText, { color: appTheme.fg }]}>{dailyPrompt}</Text>
-                    {promptSelection.whyThisQuestion ? (
-                      <Text style={[styles.promptReasonText, { color: appTheme.faint }]}>
-                        {promptSelection.whyThisQuestion}
-                      </Text>
-                    ) : null}
-                    <Pressable
-                      onPress={() => setPromptOffset((value) => value + 1)}
-                      style={styles.anotherPromptButton}
+                  <Text style={[styles.fitKicker, { color: appTheme.accent2 }]}>Today&apos;s Insight</Text>
+                  <Pressable onPress={() => openCoachModal(latestToday.text, latestToday.reply!)} style={[styles.fitInsightPreview, { backgroundColor: appTheme.ink, borderColor: appTheme.edge }, compactWidth && styles.fitInsightPreviewNarrow, shortLayout && styles.fitInsightPreviewShort]}>
+                    <Text numberOfLines={2} ellipsizeMode="tail" allowFontScaling style={[styles.fitSubmittedTitle, { color: appTheme.fg }, compactWidth && styles.fitSubmittedTitleNarrow, shortLayout && styles.fitSubmittedTitleShort]}>
+                      {latestToday.reply.title ?? "Today I noticed..."}
+                    </Text>
+                    <Text
+                      numberOfLines={2}
+                      ellipsizeMode="tail"
+                      allowFontScaling
+                      style={[styles.fitSubmittedBody, { color: appTheme.dim }, compactWidth && styles.fitSubmittedBodyNarrow, shortLayout && styles.fitSubmittedBodyShort]}
                     >
-                      <Text style={[styles.anotherPromptText, { color: appTheme.accent }]}>Refresh Prompt</Text>
-                    </Pressable>
-                  </View>
+                      {latestToday.reply.preview ?? latestToday.reply.message}
+                    </Text>
+                    <View style={styles.fitSeeMoreButton}>
+                      <Text style={[styles.inlinePremiumLink, { color: appTheme.accent }]}>See more</Text>
+                    </View>
+                  </Pressable>
+                  <View style={[styles.fitDivider, { backgroundColor: appTheme.edge }]} />
+                  <Text style={[styles.fitKicker, { color: appTheme.accent2 }]}>Ask a follow-up</Text>
                   <View style={[styles.fitFollowUpComposer, shortLayout && styles.fitFollowUpComposerShort]}>
                     <View style={styles.fitFollowUpStack}>
                       <View style={styles.fitMicPulseWrap}>
@@ -3668,37 +4122,40 @@ export default function App() {
                             (!text.trim() || pending || transcribing) && { color: appTheme.dim },
                           ]}
                         >
-                          Get Insights
+                          Continue Conversation
                         </Text>
                       </LinearGradient>
                     </Pressable>
                   </View>
                 </View>
-                <View style={[styles.fitSubmittedCard, { backgroundColor: appTheme.card, borderColor: appTheme.edge }, shortLayout && styles.fitSubmittedCardShort]}>
+                {false && <View style={[styles.fitSubmittedCard, { backgroundColor: appTheme.card, borderColor: appTheme.edge }, shortLayout && styles.fitSubmittedCardShort]}>
                   <Text style={[styles.fitKicker, { color: appTheme.accent2 }]}>Today&apos;s Insight</Text>
                   <Text style={[styles.fitSubmittedTitle, { color: appTheme.fg }, shortLayout && styles.fitSubmittedTitleShort]}>
-                    {latestToday.reply.title ?? "Today I noticed..."}
+                    {latestToday?.reply?.title ?? "Today I noticed..."}
                   </Text>
                   <Text style={[styles.fitSubmittedBody, { color: appTheme.dim }, shortLayout && styles.fitSubmittedBodyShort]}>
-                    {latestToday.reply.message}
+                    {latestToday?.reply?.message}
                   </Text>
-                  <Pressable onPress={() => openCoachModal(latestToday.text, latestToday.reply!)}>
+                  <Pressable onPress={() => latestToday?.reply && openCoachModal(latestToday.text, latestToday.reply)}>
                     <Text style={[styles.inlinePremiumLink, { color: appTheme.accent }]}>See more</Text>
                   </Pressable>
-                </View>
+                </View>}
                 </>
               ) : (
                 <>
               <View style={[styles.fitComposer, { backgroundColor: appTheme.card, borderColor: appTheme.edge }, shortLayout && styles.fitComposerShort]}>
                 <View style={styles.fitPromptBlock}>
                   <Text style={[styles.fitKicker, { color: appTheme.accent2 }]}>Today&apos;s Discovery</Text>
-                  <Text style={[styles.fitPromptText, { color: appTheme.fg }]}>{dailyPrompt}</Text>
+                  <Text testID="daily-prompt" style={[styles.fitPromptText, { color: appTheme.fg }]}>{dailyPrompt}</Text>
                   {promptSelection.whyThisQuestion ? (
                     <Text style={[styles.promptReasonText, { color: appTheme.faint }]}>
                       {promptSelection.whyThisQuestion}
                     </Text>
                   ) : null}
                   <Pressable
+                    testID="refresh-prompt"
+                    accessibilityRole="button"
+                    accessibilityLabel="Refresh prompt"
                     onPress={() => setPromptOffset((value) => value + 1)}
                     style={styles.anotherPromptButton}
                   >
@@ -3730,8 +4187,8 @@ export default function App() {
                       disabled={transcribing || pending}
                       style={({ pressed }) => [
                         styles.fitMicButton,
-                        { backgroundColor: appTheme.ink, shadowColor: appTheme.accent },
                         shortLayout && styles.fitMicButtonShort,
+                        { backgroundColor: appTheme.ink, shadowColor: appTheme.accent, width: micDiameter, height: micDiameter, borderRadius: micDiameter / 2 },
                         recording && styles.fitMicButtonRecording,
                         pressed && styles.micPressed,
                         (transcribing || pending) && styles.micDisabled,
@@ -3811,6 +4268,7 @@ export default function App() {
                 </View>
 
                 <TextInput
+                  testID="reflection-input"
                   value={text}
                   onChangeText={setText}
                   placeholder={
@@ -3829,14 +4287,17 @@ export default function App() {
                 />
               </View>
 
-              <View style={[styles.fitBasedCard, { backgroundColor: appTheme.helperBg, borderColor: appTheme.helperEdge }, shortLayout && styles.fitBasedCardShort]}>
+              {false && <View style={[styles.fitBasedCard, { backgroundColor: appTheme.helperBg, borderColor: appTheme.helperEdge }, shortLayout && styles.fitBasedCardShort]}>
                 <Text style={[styles.fitKicker, { color: appTheme.accent2 }]}>Need a little help?</Text>
                 <Text style={[styles.fitCardText, { color: appTheme.dim }, shortLayout && styles.fitCardTextShort]}>
                   {inspirationFor(text)}
                 </Text>
-              </View>
+              </View>}
 
               <Pressable
+                testID="submit-reflection"
+                accessibilityRole="button"
+                accessibilityLabel="Get insights"
                 disabled={!text.trim() || pending || transcribing || Boolean(recording)}
                 style={[
                   styles.fitShareButton,
@@ -3880,7 +4341,10 @@ export default function App() {
                     Sunday
                   </Text>
                 </View>
-                <View style={styles.fitWeeklyProgress} accessibilityLabel={`${Math.min(7, weekCheckInCount)} of 7 check-ins complete`}>
+                <Text style={[styles.fitWeeklyProgressText, { color: appTheme.dim }]}>
+                  {weekCheckInCount >= 7 ? "Your weekly reflection is ready." : weekCheckInCount === 0 ? "Your weekly reflection will begin building after your first reflection." : "Your weekly reflection is still building."}
+                </Text>
+                <View style={styles.fitWeeklyProgress} accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 7, now: Math.min(7, weekCheckInCount) }} accessibilityLabel={`Weekly Reflection, ${Math.min(7, weekCheckInCount)} of 7 complete`}>
                   {Array.from({ length: 7 }, (_, index) => (
                     <View
                       key={index}
@@ -3899,7 +4363,8 @@ export default function App() {
                   <Pressable
                     onPress={() => {
                       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                      setTab("journey");
+                      setSelectedWeeklyInsight(weeklyInsights[0] ?? lastDeepInsight);
+                      setShowJourneyDeepInsight(true);
                     }}
                     style={[styles.fitWeeklyButton, { backgroundColor: appTheme.button }]}
                   >
@@ -4072,6 +4537,7 @@ export default function App() {
 
           {tab === "journey" ? (
             <ScrollView
+              testID="journey-scroll"
               contentContainerStyle={styles.journeyContent}
               keyboardShouldPersistTaps="handled"
               onScrollBeginDrag={Keyboard.dismiss}
@@ -4083,7 +4549,7 @@ export default function App() {
                   Your journey
                 </Text>
                 <Text style={[styles.journeySubtitle, themedBody, shortLayout && styles.journeySubtitleShort]}>
-                  Today. This week. This month. Your growth.
+                  Watch your growth unfold over time.
                 </Text>
               </View>
 
@@ -4093,10 +4559,12 @@ export default function App() {
                     <Text style={[styles.sanctuaryTitle, themedTitle]}>{selectedSanctuary.label}</Text>
                     <Text style={[styles.sanctuarySubtitle, themedBody]}>Your Sanctuary</Text>
                     <Text style={[styles.sanctuaryProgressText, themedMuted]}>
-                      You've spent {checkIns.length} quit moment{checkIns.length === 1 ? "" : "s"} here.
+                      {totalReflectionDays === 0 ? "Your first reflection begins here." : `You've reflected here for ${totalReflectionDays} days.`}
                     </Text>
                   </View>
                   <Pressable
+                    testID="journey-explore-sanctuary"
+                    accessibilityRole="button"
                     onPress={() => {
                       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                       setSanctuaryDetailTheme(sanctuaryTheme);
@@ -4120,9 +4588,9 @@ export default function App() {
                     <SproutStatIcon color={appTheme.accent2} />
                     <View style={styles.sanctuaryStatCopy}>
                       <Text style={[styles.sanctuaryDays, themedAccent2]} numberOfLines={1} adjustsFontSizeToFit>
-                        {checkIns.length}
+                        {totalReflectionDays}
                       </Text>
-                      <Text style={[styles.sanctuaryProgressText, themedMuted]} numberOfLines={1}>Quit moments</Text>
+                      <Text style={[styles.sanctuaryProgressText, themedMuted]}>Reflection days</Text>
                     </View>
                   </View>
                   <View style={styles.sanctuaryDivider} />
@@ -4130,7 +4598,7 @@ export default function App() {
                     <Text style={styles.sanctuaryStatIcon}>Streak</Text>
                     <View style={styles.sanctuaryStatCopy}>
                       <Text style={[styles.sanctuaryDays, themedAccent2]} numberOfLines={1} adjustsFontSizeToFit>{streak}</Text>
-                      <Text style={[styles.sanctuaryProgressText, themedMuted]} numberOfLines={1}>Streak</Text>
+                      <Text style={[styles.sanctuaryProgressText, themedMuted]}>Current streak</Text>
                     </View>
                   </View>
                   <View style={styles.sanctuaryDivider} />
@@ -4141,12 +4609,73 @@ export default function App() {
                     </Text>
                     <Text style={[styles.sanctuaryNext, themedAccent2]}>
                       {upcomingSanctuary
-                        ? `Unlocks in ${reflectionsToNextSanctuary} reflection${reflectionsToNextSanctuary === 1 ? "" : "s"}`
+                        ? `Unlocks in ${reflectionsToNextSanctuary} reflection day${reflectionsToNextSanctuary === 1 ? "" : "s"}`
                         : "Sanctuary collection complete"}
                     </Text>
                   </View>
                 </View>
               </View>
+
+              <Pressable
+                onPress={() => {
+                  setTab("you");
+                  setShowThemePicker(true);
+                }}
+                style={[styles.journeyCard, themedCard]}
+              >
+                <View style={styles.premiumHeader}>
+                  <View>
+                    <Text style={[styles.journeySectionTitle, themedAccent2]}>Your Sanctuaries</Text>
+                    <Text style={[styles.journeyCardText, themedBody]}>
+                      {PRIMARY_SANCTUARY_KEYS.filter((key) => isThemeUnlocked(getSanctuaryTheme(key), totalReflectionDays, premium)).length} of 5 discovered
+                    </Text>
+                  </View>
+                  <Text style={[styles.inlinePremiumLink, themedAccent]}>View all</Text>
+                </View>
+                <Text style={[styles.youCardMuted, themedMuted, { marginTop: 8 }]}>Every 7 reflection days reveals a new sanctuary. Missing a day never removes your progress.</Text>
+                {upcomingSanctuary ? (
+                  <View style={[styles.authSummaryCard, themedInk, { marginTop: 12 }]}> 
+                    <Text style={[styles.authSummaryLabel, themedAccent2]}>Next sanctuary</Text>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 12, marginTop: 8 }}>
+                      <Image source={upcomingSanctuary.artwork} style={{ width: 58, height: 58, borderRadius: 14 }} resizeMode="cover" />
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.authSummaryValue, themedTitle]}>{upcomingSanctuary.label}</Text>
+                        <Text style={[styles.youCardMuted, themedMuted]}>{totalReflectionDays} / {upcomingSanctuary.unlockDays} reflection days</Text>
+                        <Text style={[styles.inlinePremiumLink, themedAccent]}>{reflectionsToNextSanctuary} more reflection day{reflectionsToNextSanctuary === 1 ? "" : "s"} to unlock</Text>
+                      </View>
+                    </View>
+                  </View>
+                ) : null}
+              </Pressable>
+
+              <Pressable
+                style={[styles.journeyPremiumCard, themedWeekly]}
+                onPress={() => {
+                  if (!weeklyInsights.length && !lastDeepInsight && !hasDemoData) {
+                    openPremium();
+                    return;
+                  }
+                  setSelectedWeeklyInsight(weeklyInsights[0] ?? lastDeepInsight);
+                  setShowJourneyDeepInsight(true);
+                }}
+              >
+                <View style={styles.premiumHeader}>
+                  <View>
+                    <Text style={[styles.journeySectionTitle, themedAccent2]}>Weekly Reflection</Text>
+                    <Text style={[styles.journeyCardText, themedBody]}>{weeklyReflectionDays === 7 ? "Your weekly reflection is ready." : "Your weekly reflection is still building."}</Text>
+                  </View>
+                  <Text style={[styles.youCardMuted, themedMuted]}>Sunday</Text>
+                </View>
+                <View style={styles.fitWeeklyProgress}>
+                  {Array.from({ length: 7 }, (_, index) => {
+                    return <View key={index} style={[styles.fitWeeklyProgressSegment, { backgroundColor: index < weeklyReflectionDays ? appTheme.accent : appTheme.ink }]} />;
+                  })}
+                </View>
+                <Text style={[styles.youCardMuted, themedMuted]}>{weeklyReflectionDays} of 7 complete</Text>
+                {weeklyInsights.length || lastDeepInsight ? (
+                  <Text style={[styles.inlinePremiumLink, themedAccent]}>{weeklyInsights.length > 1 ? "View Weekly Reflection History" : "Read Weekly Reflection"}</Text>
+                ) : null}
+              </Pressable>
 
               <View style={[styles.monthCard, themedCard]}>
                 <Text style={[styles.monthKicker, themedAccent2]}>This Month's Growth</Text>
@@ -4183,13 +4712,13 @@ export default function App() {
               </View>
 
               <View style={[styles.journeyCard, themedCard]}>
-                <Text style={[styles.journeySectionTitle, themedAccent2]}>Patterns Growing</Text>
+                <Text style={[styles.journeySectionTitle, themedAccent2]}>Patterns I've Noticed</Text>
                 <View style={{ marginTop: 10, gap: 8 }}>
                   {journeyMemory.memoryFacts.map((fact) => (
-                    <View key={fact} style={[styles.patternObservationRow, themedInk]}>
+                    <Pressable key={fact} onPress={() => Alert.alert("Pattern I've Noticed", `${fact}\n\nThis is a gentle observation from your recent reflections, not a definitive conclusion.`)} style={[styles.patternObservationRow, themedInk]}>
                       <Text style={[styles.patternObservationCheck, themedAccent]}>›</Text>
                       <Text style={[styles.journeyCardText, themedBody, { flex: 1 }]}>{fact}</Text>
-                    </View>
+                    </Pressable>
                   ))}
                 </View>
                 <Text style={[styles.journeyUpdated, themedMuted]}>Updated today</Text>
@@ -4294,8 +4823,8 @@ export default function App() {
                                 pressed && { opacity: 0.7 },
                               ]}
                             >
-                              <Text style={[styles.coachReplyIndicatorText, themedAccent]}>View Tranqly response</Text>
-                              <Text style={[styles.coachReplyArrow, themedAccent]}>-&gt;</Text>
+                              <Text style={[styles.coachReplyIndicatorText, themedAccent]}>View Tranqly Response</Text>
+                              <Text style={[styles.coachReplyArrow, themedAccent]}>›</Text>
                             </Pressable>
                           )}
                         </View>
@@ -4316,25 +4845,12 @@ export default function App() {
               )}
 
 
-              <Pressable style={[styles.journeyPremiumCard, themedWeekly]} onPress={openPremium}>
-                <View style={styles.premiumHeader}>
-                  <Text style={[styles.journeySectionTitle, themedAccent2]}>Weekly Reflection</Text>
-                  <View style={styles.premiumPillWrap}>
-                    <Text style={[styles.premiumCrown, themedAccent]}>Plus</Text>
-                    <Text style={[styles.premiumPill, themedAccent]}>Premium</Text>
-                  </View>
-                </View>
-                <Text style={[styles.journeyCardText, themedBody]}>
-                  Unlock your full weekly reflection every Sunday.
-                </Text>
-                <Text style={[styles.inlinePremiumLink, themedAccent]}>Unlock weekly reflection</Text>
-              </Pressable>
-
                           </ScrollView>
           ) : null}
 
           {tab === "you" ? (
             <ScrollView
+              testID="you-scroll"
               contentContainerStyle={styles.youContent}
               keyboardShouldPersistTaps="handled"
               onScrollBeginDrag={Keyboard.dismiss}
@@ -4354,6 +4870,30 @@ export default function App() {
                   placeholderTextColor={appTheme.faint}
                   style={[styles.youInput, themedInk, themedTitle]}
                 />
+              </View>
+
+              <View style={[styles.youCard, themedCard]}>
+                <Text style={[styles.youSectionTitle, themedAccent2]}>Your Sanctuary</Text>
+                <View style={styles.currentSanctuaryBanner}>
+                  <Image source={selectedSanctuary.artwork} style={styles.currentSanctuaryImage} resizeMode="cover" />
+                  <LinearGradient colors={["rgba(11,14,20,0.12)", "rgba(11,14,20,0.88)"]} style={StyleSheet.absoluteFill} />
+                  <View style={styles.currentSanctuaryCopy}>
+                    <View style={[styles.sanctuaryThemeIconWrap, { borderColor: selectedSanctuary.accent }]}>
+                      <ThemeIcon type={selectedSanctuary.key} color={selectedSanctuary.accent} size={22} />
+                    </View>
+                    <Text style={styles.currentSanctuaryTitle}>{selectedSanctuary.label}</Text>
+                    <Text style={styles.currentSanctuaryText} numberOfLines={2}>{selectedSanctuary.description}</Text>
+                    <Text style={[styles.currentSanctuaryBadge, { color: selectedSanctuary.accent }]}>Selected</Text>
+                  </View>
+                </View>
+                <View style={styles.currentSanctuaryActions}>
+                  <Pressable testID="change-sanctuary" accessibilityRole="button" onPress={() => { void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowThemePicker(true); }} style={[styles.themePreviewButton, { flex: 1, backgroundColor: appTheme.helperBg, borderColor: appTheme.edge }]}> 
+                    <Text style={[styles.themePreviewButtonText, themedAccent]}>Change Sanctuary</Text>
+                  </Pressable>
+                  <Pressable onPress={() => { setSanctuaryDetailTheme(sanctuaryTheme); setShowSanctuaryModal(true); }} style={[styles.themePreviewButton, { flex: 1, backgroundColor: appTheme.helperBg, borderColor: appTheme.edge }]}>
+                    <Text style={[styles.themePreviewButtonText, themedAccent]}>Explore Sanctuary</Text>
+                  </Pressable>
+                </View>
               </View>
 
               <View style={[styles.youCard, themedCard]}>
@@ -4487,7 +5027,7 @@ export default function App() {
                     </Text>
                   </View>
                   <Text style={[styles.authStatusPill, { borderColor: appTheme.edge, color: appTheme.accent }]}>
-                    {notificationSettings.permissionStatus}
+                    {notificationStatusLabel}
                   </Text>
                 </View>
                 {!notificationsExpanded ? (
@@ -4500,17 +5040,9 @@ export default function App() {
                             ? `${formatHourLabel(notificationSettings.dailyReminderTime)} • ${QUIET_MINUTE_OPTIONS.find((option) => option.key === notificationSettings.quietMinuteOption)?.label ?? "Custom"}`
                             : "Off"}
                         </Text>
-                        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
-                          <View style={[styles.themePickerSmallButton, { borderColor: appTheme.edge, backgroundColor: appTheme.card }]}>
-                            <Text style={[styles.themePickerSmallText, themedMuted]}>
-                              Weekly {notificationSettings.weeklyInsightEnabled ? "On" : "Off"}
-                            </Text>
-                          </View>
-                          <View style={[styles.themePickerSmallButton, { borderColor: appTheme.edge, backgroundColor: appTheme.card }]}>
-                            <Text style={[styles.themePickerSmallText, themedMuted]}>
-                              Unlocks {notificationSettings.sanctuaryUnlockEnabled ? "On" : "Off"}
-                            </Text>
-                          </View>
+                        <View style={{ gap: 6, marginTop: 10 }}>
+                          <View style={{ flexDirection: "row", justifyContent: "space-between" }}><Text style={[styles.themePickerSmallText, themedMuted]}>Weekly Reflection</Text><Text style={[styles.themePickerSmallText, themedAccent]}>{notificationSettings.weeklyInsightEnabled ? "On" : "Off"}</Text></View>
+                          <View style={{ flexDirection: "row", justifyContent: "space-between" }}><Text style={[styles.themePickerSmallText, themedMuted]}>Sanctuary Unlocks</Text><Text style={[styles.themePickerSmallText, themedAccent]}>{notificationSettings.sanctuaryUnlockEnabled ? "On" : "Off"}</Text></View>
                         </View>
                       </View>
                       <Pressable
@@ -4557,6 +5089,9 @@ export default function App() {
                     <View style={styles.notificationOptionsWrap}>
                       {QUIET_MINUTE_OPTIONS.map((option) => (
                         <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel={recording ? "Microphone recording, double tap to stop" : "Microphone, double tap to begin recording"}
+                          accessibilityState={{ disabled: transcribing || pending }}
                           key={option.key}
                           style={[
                             styles.notificationOptionChip,
@@ -4652,6 +5187,9 @@ export default function App() {
                     </Pressable>
                     {reminderSuggestion ? (
                       <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={recording ? "Microphone recording, double tap to stop" : "Microphone, double tap to begin recording"}
+                        accessibilityState={{ disabled: transcribing || pending }}
                         style={[styles.authSummaryCard, themedInk]}
                         onPress={() =>
                           setNotificationDraft((current) => ({
@@ -4688,7 +5226,7 @@ export default function App() {
                 )}
               </View>
 
-              <View style={[styles.youCard, themedCard]}>
+              {false && <View style={[styles.youCard, themedCard]}>
                 <Text style={[styles.youSectionTitle, themedAccent2]}>Your Sanctuary</Text>
                 <View style={styles.currentSanctuaryBanner}>
                   <Image source={selectedSanctuary.artwork} style={styles.currentSanctuaryImage} resizeMode="cover" />
@@ -4713,7 +5251,7 @@ export default function App() {
                     }}
                     style={[styles.themePreviewButton, { flex: 1, backgroundColor: appTheme.helperBg, borderColor: appTheme.edge }]}
                   >
-                    <Text style={[styles.themePreviewButtonText, themedAccent]}>Change Theme</Text>
+                    <Text style={[styles.themePreviewButtonText, themedAccent]}>Change Sanctuary</Text>
                   </Pressable>
                   <Pressable
                     onPress={() => {
@@ -4725,7 +5263,7 @@ export default function App() {
                     <Text style={[styles.themePreviewButtonText, themedAccent]}>Explore Sanctuary</Text>
                   </Pressable>
                 </View>
-              </View>
+              </View>}
 
               <Modal
                 visible={showThemePicker}
@@ -4739,17 +5277,19 @@ export default function App() {
                     <View style={styles.themePickerHeader}>
                       <View>
                         <Text style={[styles.themePreviewBadge, themedAccent]}>Choose Sanctuary</Text>
-                        <Text style={[styles.themePreviewTitle, themedTitle]}>Sanctuary themes</Text>
+                        <Text style={[styles.themePreviewTitle, themedTitle]}>Your Sanctuaries</Text>
                       </View>
-                      <Pressable onPress={() => setShowThemePicker(false)} style={styles.themeModalClose}>
+                      <Pressable testID="close-theme-picker" accessibilityRole="button" accessibilityLabel="Close sanctuary picker" onPress={() => setShowThemePicker(false)} style={styles.themeModalClose}>
                         <Text style={[styles.themeModalCloseText, themedMuted]}>x</Text>
                       </Pressable>
                     </View>
-                    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 18 }}>
+                    <ScrollView testID="theme-picker-scroll" showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 18 }}>
                       {[
                         ["Current", sanctuaryThemesByUnlock().filter((theme) => theme.key === sanctuaryTheme)],
-                        ["Available", sanctuaryThemesByUnlock().filter((theme) => theme.key !== sanctuaryTheme && isThemeUnlocked(theme, checkIns.length, premium))],
-                        ["Locked", sanctuaryThemesByUnlock().filter((theme) => !isThemeUnlocked(theme, checkIns.length, premium))],
+                        ["Available", sanctuaryThemesByUnlock().filter((theme) => theme.key !== sanctuaryTheme && isThemeUnlocked(theme, totalReflectionDays, premium))],
+                        ["Growing", sanctuaryThemesByUnlock().filter((theme) => theme.unlockType === "reflections" && !isThemeUnlocked(theme, totalReflectionDays, premium)).slice(0, 2)],
+                        ["Locked", sanctuaryThemesByUnlock().filter((theme) => theme.unlockType === "reflections" && !isThemeUnlocked(theme, totalReflectionDays, premium)).slice(2)],
+                        ["Seasonal", sanctuaryThemesByUnlock().filter((theme) => theme.unlockType === "seasonal")],
                       ].map(([label, rawThemes]) => {
                         const themes = rawThemes as typeof SANCTUARY_THEMES;
                         if (!themes.length) return null;
@@ -4758,7 +5298,7 @@ export default function App() {
                             <Text style={[styles.youSectionTitle, themedAccent2]}>{label as string}</Text>
                             <View style={styles.themePickerGrid}>
                               {themes.map((theme) => {
-                                const unlocked = isThemeUnlocked(theme, checkIns.length, premium);
+                                const unlocked = isThemeUnlocked(theme, totalReflectionDays, premium);
                                 return (
                                   <Pressable
                                     key={theme.key}
@@ -4779,7 +5319,7 @@ export default function App() {
                                       <ThemeIcon type={theme.key} color={theme.accent} size={22} />
                                       <Text style={styles.themePickerTileTitle}>{theme.label}</Text>
                                       <Text style={styles.themePickerTileSub} numberOfLines={1}>
-                                        {unlocked ? theme.feeling : themeProgressLabel(theme, checkIns.length, premium)}
+                                        {unlocked ? theme.feeling : themeProgressLabel(theme, totalReflectionDays, premium)}
                                       </Text>
                                       <View style={styles.themePickerActions}>
                                         <Pressable
@@ -4878,25 +5418,25 @@ export default function App() {
                           </View>
                           <Pressable
                             onPress={() => {
-                              if (!isThemeUnlocked(selected, checkIns.length, premium)) return;
+                              if (!isThemeUnlocked(selected, totalReflectionDays, premium)) return;
                               setSanctuaryTheme(selected.key);
                               setDraftSanctuaryTheme(selected.key);
                               setShowThemePreview(false);
                               setShowThemePicker(false);
                             }}
-                            disabled={sanctuaryTheme === selected.key || !isThemeUnlocked(selected, checkIns.length, premium)}
+                            disabled={sanctuaryTheme === selected.key || !isThemeUnlocked(selected, totalReflectionDays, premium)}
                             style={[
                               styles.themeApplyButton,
                               { backgroundColor: appTheme.button },
-                              (sanctuaryTheme === selected.key || !isThemeUnlocked(selected, checkIns.length, premium)) && styles.themeApplyButtonDisabled,
+                              (sanctuaryTheme === selected.key || !isThemeUnlocked(selected, totalReflectionDays, premium)) && styles.themeApplyButtonDisabled,
                             ]}
                           >
                             <Text style={[styles.themeApplyButtonText, themedTitle]}>
                               {sanctuaryTheme === selected.key
                                 ? "Theme applied"
-                                : isThemeUnlocked(selected, checkIns.length, premium)
+                                : isThemeUnlocked(selected, totalReflectionDays, premium)
                                   ? "Select Theme"
-                                  : themeProgressLabel(selected, checkIns.length, premium)}
+                                  : themeProgressLabel(selected, totalReflectionDays, premium)}
                             </Text>
                           </Pressable>
                         </View>
@@ -4909,27 +5449,81 @@ export default function App() {
               <View style={[styles.youCard, themedCard]}>
                 <Text style={[styles.youSectionTitle, themedAccent2]}>Privacy</Text>
                 <Text style={[styles.youCardBody, themedBody]}>
-                  Your reflections are private to your account. Tranqly uses your past check-ins only to personalize your insights.
+                  {authUser
+                    ? "Your reflections are associated with your account and used only to provide Tranqly features."
+                    : "Your reflections stay on this device unless you choose to sign in and sync them."}
                 </Text>
               </View>
 
               <View style={[styles.youCard, themedCard]}>
                 <Text style={[styles.youSectionTitle, themedAccent2]}>What Tranqly remembers</Text>
                 <Text style={[styles.youCardBody, themedBody]}>
-                  Short notes are saved from your conversations so replies can feel more personal over time.
+                  Tranqly may save short notes from your reflections so future responses can feel more personal.
                 </Text>
                 <Text style={[styles.youCardMuted, themedMuted]}>
-                  Tranqly has not learned anything durable yet. The more you check in, the more personal it gets.
+                  Tranqly has not saved any lasting notes yet. The more you reflect, the more personal it can become.
                 </Text>
+                <Pressable onPress={() => Alert.alert("Manage Memory", "Tranqly has not saved any lasting notes yet.")} style={[styles.dataControlButton, themedInk]}>
+                  <Text style={[styles.dataControlText, themedAccent]}>Manage Memory</Text>
+                </Pressable>
+              </View>
+
+              <View style={[styles.youCard, themedWeekly]}>
+                <View style={styles.authCardHeader}>
+                  <View style={{ flex: 1 }}><Text style={[styles.authSummaryLabel, themedAccent2]}>Tranqly Plus</Text><Text style={[styles.youSectionTitle, themedTitle]}>Your Year in Reflection</Text></View>
+                  <Text style={[styles.authStatusPill, { borderColor: appTheme.helperEdge, color: appTheme.accent }]}>Coming Soon</Text>
+                </View>
+                <Text style={[styles.youCardBody, themedBody]}>A private story of the reflection days, sanctuaries, themes, habits, and patterns that shaped your year.</Text>
+                <View style={[styles.authButtonRow, { marginTop: 12 }]}>
+                  <View style={[styles.authSummaryCard, themedInk, { flex: 1 }]}><Text style={[styles.authSummaryValue, themedAccent]}>{totalReflectionDays}</Text><Text style={[styles.youCardMuted, themedMuted]}>Reflection days so far</Text></View>
+                  <View style={[styles.authSummaryCard, themedInk, { flex: 1 }]}><Text style={[styles.authSummaryValue, themedAccent]}>{PRIMARY_SANCTUARY_KEYS.filter((key) => totalReflectionDays >= getSanctuaryTheme(key).unlockDays).length}</Text><Text style={[styles.youCardMuted, themedMuted]}>Sanctuaries discovered</Text></View>
+                </View>
+                <Text style={[styles.youCardMuted, themedMuted]}>Private by default. Shared summaries will not include sensitive reflection details.</Text>
               </View>
 
               <View style={[styles.youCard, themedCard]}>
                 <Text style={[styles.youSectionTitle, themedAccent2]}>Data controls</Text>
+                {__DEV__ ? <>
+                <Text style={[styles.youCardBody, themedBody]}>Developer preview controls</Text>
+                <Pressable
+                  style={[
+                    styles.dataControlButton,
+                    premium
+                      ? themedInk
+                      : { backgroundColor: appTheme.helperBg, borderColor: appTheme.helperEdge },
+                  ]}
+                  onPress={() => {
+                    setPremium((current) => !current);
+                    setGrowthNotice(premium ? "Tranqly Plus locked for testing." : "Tranqly Plus unlocked for testing.");
+                    setTimeout(() => setGrowthNotice(""), 4500);
+                  }}
+                >
+                  <Text style={[styles.dataControlText, premium ? themedBody : themedAccent]}>
+                    {premium ? "Lock Tranqly Plus" : "Unlock Tranqly Plus"}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[
+                    styles.dataControlButton,
+                    hasDemoData
+                      ? { backgroundColor: appTheme.helperBg, borderColor: appTheme.helperEdge }
+                      : { backgroundColor: appTheme.button, borderColor: appTheme.accent },
+                  ]}
+                  onPress={hasDemoData ? removeDemoData : addDemoData}
+                >
+                  <Text style={[styles.dataControlText, hasDemoData ? themedAccent : themedTitle]}>
+                    {hasDemoData ? "Remove demo data" : "Add demo data"}
+                  </Text>
+                </Pressable>
+                </> : null}
+                <Pressable style={[styles.dataControlButton, themedInk]} onPress={() => void Share.share({ message: JSON.stringify({ exportedAt: new Date().toISOString(), reflections: checkIns, weeklyReflections: weeklyInsights }, null, 2), title: "Tranqly data export" })}>
+                  <Text style={[styles.dataControlText, themedBody]}>Export My Data</Text>
+                </Pressable>
                 <Pressable
                   style={[styles.dataControlButton, themedInk]}
-                  onPress={() => Alert.alert("Memory reset", "Tranqly will rebuild memory from future check-ins.")}
+                  onPress={() => Alert.alert("Reset Tranqly Memory?", "Tranqly will rebuild memory from future reflections.")}
                 >
-                  <Text style={[styles.dataControlText, themedBody]}>Reset memory profile</Text>
+                  <Text style={[styles.dataControlText, themedBody]}>Reset Tranqly Memory</Text>
                 </Pressable>
                 <Pressable
                   style={[styles.dataControlButton, themedInk]}
@@ -4957,6 +5551,7 @@ export default function App() {
                         onPress: () => {
                           setCheckIns([]);
                           setLastDeepInsight(null);
+                          setWeeklyInsights([]);
                           setMoods({});
                         },
                       },
@@ -4965,6 +5560,9 @@ export default function App() {
                 >
                   <Text style={styles.dangerButtonText}>Delete all reflections</Text>
                 </Pressable>
+                {authUser ? <Pressable style={[styles.dangerButton, { marginTop: 12 }]} onPress={() => Alert.alert("Delete account?", "This permanently deletes your Tranqly account. This cannot be undone.", [{ text: "Cancel", style: "cancel" }, { text: "Delete Account", style: "destructive", onPress: async () => { if (!FIREBASE_API_KEY) return; const response = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:delete?key=${FIREBASE_API_KEY}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idToken: authUser.idToken }) }); if (response.ok) { setAuthUser(null); setCheckIns([]); setWeeklyInsights([]); setLastDeepInsight(null); } else Alert.alert("Could not delete account", "Please sign in again and retry."); } }])}>
+                  <Text style={styles.dangerButtonText}>Delete Account</Text>
+                </Pressable> : null}
               </View>
 
               <Text style={styles.youFooter}>Tranqly - your reflections live on your device</Text>
@@ -5006,6 +5604,10 @@ export default function App() {
               return (
                 <Pressable
                   key={key}
+                  testID={`tab-${key}`}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: active }}
+                  accessibilityLabel={label}
                   onPress={() => setTab(key)}
                   style={[styles.tab, active && { backgroundColor: appTheme.button }]}
                 >
@@ -5100,6 +5702,8 @@ export default function App() {
                   style={styles.modalClose}
                   onPress={() => setCoachModal(null)}
                   hitSlop={12}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close response"
                 >
                   <Text style={styles.modalCloseText}>x</Text>
                 </Pressable>
@@ -5121,7 +5725,7 @@ export default function App() {
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={[styles.kicker, themedAccent2, shortLayout && styles.kickerShort]}>
-                      {displayName.trim() || "You"}
+                      Your Reflection
                     </Text>
                     <Text style={[styles.modalUserEntry, themedTitle, shortLayout && styles.modalUserEntryShort]}>
                       "{coachModal?.text}"
@@ -5130,19 +5734,19 @@ export default function App() {
                 </View>
 
                 <Text style={[styles.modalMessage, themedBody, shortLayout && styles.modalMessageShort]}>
-                  <Text style={[styles.kicker, themedAccent2, shortLayout && styles.kickerShort]}>Tranqly{"\n"}</Text>
+                  <Text style={[styles.kicker, themedAccent2, shortLayout && styles.kickerShort]}>What Stood Out{"\n"}</Text>
                   {coachModal?.reply.message}
                 </Text>
 
                 <View style={[styles.nextStepBox, themedInk, shortLayout && styles.nextStepBoxShort]}>
-                  <Text style={[styles.nextStepLabel, themedAccent2, shortLayout && styles.nextStepLabelShort]}>One gentle step</Text>
+                  <Text style={[styles.nextStepLabel, themedAccent2, shortLayout && styles.nextStepLabelShort]}>{coachStepLabel}</Text>
                   <Text style={[styles.nextStep, themedTitle, shortLayout && styles.nextStepShort]}>
                     {coachModal?.reply.nextStep}
                   </Text>
                 </View>
                 {coachModal?.reply.pattern ? (
                   <View style={[styles.nextStepBox, themedInk, shortLayout && styles.nextStepBoxShort]}>
-                    <Text style={[styles.nextStepLabel, themedAccent2, shortLayout && styles.nextStepLabelShort]}>Pattern to watch</Text>
+                    <Text style={[styles.nextStepLabel, themedAccent2, shortLayout && styles.nextStepLabelShort]}>{coachPatternEvidence >= 3 ? "Pattern to Watch" : coachPatternEvidence === 2 ? "A Pattern May Be Emerging" : "Something to Notice"}</Text>
                     <Text style={[styles.nextStep, themedTitle, shortLayout && styles.nextStepShort]}>
                       {coachModal.reply.pattern}
                     </Text>
@@ -5151,16 +5755,119 @@ export default function App() {
                 <View style={[styles.responseFeedbackRow, { borderColor: appTheme.edge }]}>
                   <Text style={[styles.responseFeedbackLabel, themedMuted]}>Was this helpful?</Text>
                   <View style={styles.responseFeedbackActions}>
-                    <Pressable style={[styles.responseFeedbackButton, themedInk]}>
+                    <Pressable onPress={() => { saveMobileResponseFeedback(true); setResponseFeedbackOpen(false); }} style={[styles.responseFeedbackButton, themedInk]}>
                       <Text style={[styles.responseFeedbackText, themedAccent]}>Helpful</Text>
                     </Pressable>
-                    <Pressable style={[styles.responseFeedbackButton, themedInk]}>
+                    <Pressable onPress={() => setResponseFeedbackOpen(true)} style={[styles.responseFeedbackButton, themedInk]}>
                       <Text style={[styles.responseFeedbackText, themedAccent]}>Not helpful</Text>
                     </Pressable>
                   </View>
                 </View>
               </Pressable>
             </Pressable>
+          </Modal>
+
+          <Modal
+            visible={showJourneyDeepInsight}
+            transparent
+            animationType="slide"
+            onRequestClose={() => setShowJourneyDeepInsight(false)}
+          >
+            <View style={styles.sanctuaryModalOverlay}>
+              <View style={[styles.sanctuaryModalCard, themedCard]}>
+                <View style={styles.sanctuaryModalHeader}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.sanctuaryKicker, themedAccent2]}>Weekly Reflections</Text>
+                    <Text style={[styles.sanctuaryModalTitle, themedTitle]}>Weekly Reflection History</Text>
+                  </View>
+                  <Pressable onPress={() => setShowJourneyDeepInsight(false)} style={[styles.sanctuaryCloseButton, themedInk]}>
+                    <Text style={[styles.sanctuaryCloseText, themedAccent]}>Close</Text>
+                  </Pressable>
+                </View>
+                {responseFeedbackOpen ? (
+                  <View style={[styles.authSummaryCard, themedInk, { marginTop: 12 }]}>
+                    <Text style={[styles.notificationLabel, themedTitle]}>What felt off?</Text>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+                      {["Too obvious", "Too much advice", "Incorrect pattern", "Too personal", "Did not understand me"].map((reason) => (
+                        <Pressable key={reason} onPress={() => { saveMobileResponseFeedback(false, reason); setResponseFeedbackOpen(false); setResponseFeedbackText(""); }} style={[styles.responseFeedbackButton, { borderColor: appTheme.edge }]}>
+                          <Text style={[styles.responseFeedbackText, themedAccent]}>{reason}</Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                    <TextInput value={responseFeedbackText} onChangeText={setResponseFeedbackText} placeholder="Tell us more (optional)" placeholderTextColor={appTheme.faint} style={[styles.youInput, themedCard, themedTitle, { marginTop: 10 }]} />
+                  </View>
+                ) : null}
+                <ScrollView testID="weekly-reflection-modal-scroll" showsVerticalScrollIndicator={false}>
+                  {selectedWeeklyInsight ? (
+                    <View style={[styles.authSummaryCard, themedInk]}>
+                      <Text style={[styles.authSummaryLabel, themedMuted]}>
+                        Week of {new Date(selectedWeeklyInsight.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
+                      </Text>
+                      <Text style={[styles.deepHeadline, themedTitle]}>{selectedWeeklyInsight.headline}</Text>
+                      <Text style={[styles.journeyCardText, themedBody]}>{selectedWeeklyInsight.insight}</Text>
+                      <View style={[styles.authSummaryCard, { backgroundColor: appTheme.helperBg, borderColor: appTheme.helperEdge, marginTop: 10 }]}>
+                        <Text style={[styles.authSummaryLabel, themedAccent2]}>This week's experiment</Text>
+                        <Text style={[styles.youCardMuted, themedBody]}>{selectedWeeklyInsight.suggestion}</Text>
+                      </View>
+                    </View>
+                  ) : (
+                    <Text style={[styles.journeyCardText, themedBody]}>Your first weekly reflection will appear here when it is ready.</Text>
+                  )}
+                  {weeklyInsights.length > 1 ? (
+                    <View style={{ marginTop: 16, gap: 8 }}>
+                      <Text style={[styles.authSummaryLabel, themedMuted]}>Previous weeks</Text>
+                      {weeklyInsights.map((insight) => (
+                        <Pressable key={insight.createdAt} onPress={() => setSelectedWeeklyInsight(insight)} style={[styles.notificationRow, themedInk, selectedWeeklyInsight?.createdAt === insight.createdAt && { borderColor: appTheme.accent }]}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.notificationLabel, themedTitle]}>{insight.headline}</Text>
+                            <Text style={[styles.youCardMuted, themedMuted]}>{new Date(insight.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</Text>
+                          </View>
+                          <Text style={[styles.notificationValue, themedAccent]}>View</Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  ) : null}
+                </ScrollView>
+              </View>
+            </View>
+          </Modal>
+
+          <Modal
+            visible={Boolean(newlyUnlockedSanctuary)}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setNewlyUnlockedSanctuary(null)}
+          >
+            <View style={styles.sanctuaryModalOverlay}>
+              <View style={[styles.modalCard, themedCard]}>
+                {newlyUnlockedSanctuary ? (
+                  <>
+                    <Text style={[styles.kicker, themedAccent2]}>Sanctuary Unlocked</Text>
+                    <Text style={[styles.sanctuaryModalTitle, themedTitle]}>{getSanctuaryTheme(newlyUnlockedSanctuary).label}</Text>
+                    <Text style={[styles.modalMessage, themedBody]}>A new sanctuary is ready to explore.</Text>
+                    <Text style={[styles.youCardMuted, themedMuted]}>You reflected on {totalReflectionDays} different days.</Text>
+                    <View style={[styles.authButtonRow, { marginTop: 18 }]}>
+                      <Pressable style={[styles.authSecondaryButton, { borderColor: appTheme.edge }]} onPress={() => setNewlyUnlockedSanctuary(null)}>
+                        <Text style={[styles.authSecondaryText, themedAccent]}>Not Now</Text>
+                      </Pressable>
+                      <Pressable
+                        style={[styles.authPrimaryButton, { backgroundColor: appTheme.button }]}
+                        onPress={() => {
+                          const key = newlyUnlockedSanctuary;
+                          setSanctuaryTheme(key);
+                          setDraftSanctuaryTheme(key);
+                          setSanctuaryDetailTheme(key);
+                          setNewlyUnlockedSanctuary(null);
+                          setShowSanctuaryModal(true);
+                        }}
+                      >
+                        <Text style={[styles.authPrimaryText, themedTitle]}>Enter Sanctuary</Text>
+                      </Pressable>
+                    </View>
+                  </>
+                ) : null}
+              </View>
+            </View>
           </Modal>
 
           <Modal
@@ -5179,11 +5886,13 @@ export default function App() {
                       {sanctuaryTheme === detailSanctuary.key ? (
                         <Text style={[styles.sanctuaryMetaPill, themedMuted]}>Current Sanctuary</Text>
                       ) : null}
+                      {sanctuaryTheme !== detailSanctuary.key ? (
+                        <Text style={[styles.sanctuaryMetaPill, themedMuted]}>
+                          {themeProgressLabel(detailSanctuary, totalReflectionDays, premium)}
+                        </Text>
+                      ) : null}
                       <Text style={[styles.sanctuaryMetaPill, themedMuted]}>
-                        {themeProgressLabel(detailSanctuary, checkIns.length, premium)}
-                      </Text>
-                      <Text style={[styles.sanctuaryMetaPill, themedMuted]}>
-                        {detailSanctuaryReflectionCount} quit moment{detailSanctuaryReflectionCount === 1 ? "" : "s"} here
+                        {detailSanctuaryReflectionCount} Reflection Day{detailSanctuaryReflectionCount === 1 ? "" : "s"}
                       </Text>
                     </View>
                     <Text style={[styles.sanctuarySubtitle, themedBody]}>
@@ -5191,6 +5900,8 @@ export default function App() {
                     </Text>
                   </View>
                   <Pressable
+                    testID="close-sanctuary"
+                    accessibilityRole="button"
                     onPress={() => setShowSanctuaryModal(false)}
                     style={[styles.sanctuaryCloseButton, themedInk]}
                     hitSlop={12}
@@ -5198,7 +5909,7 @@ export default function App() {
                     <Text style={[styles.sanctuaryCloseText, themedAccent]}>Close</Text>
                   </Pressable>
                 </View>
-                <ScrollView showsVerticalScrollIndicator={false}>
+                <ScrollView testID="sanctuary-modal-scroll" showsVerticalScrollIndicator={false}>
                   <View style={styles.sanctuaryModalArtworkFrame}>
                     <Image source={detailSanctuary.artwork} style={styles.sanctuaryModalArtwork} resizeMode="cover" />
                     <LinearGradient colors={["rgba(11,14,20,0)", "rgba(11,14,20,0.76)"]} style={StyleSheet.absoluteFill} />
@@ -5208,7 +5919,7 @@ export default function App() {
                   <View style={styles.sanctuaryStatsRow}>
                     <View style={styles.sanctuaryStatPill}>
                       <Text style={styles.sanctuaryStatValue}>{detailSanctuaryReflectionCount}</Text>
-                      <Text style={styles.sanctuaryStatLabel}>Quiet moments here</Text>
+                      <Text style={styles.sanctuaryStatLabel}>Reflection Days</Text>
                     </View>
                     <View style={styles.sanctuaryStatPill}>
                       <Text style={styles.sanctuaryStatValue}>{streak}d</Text>
@@ -5227,7 +5938,7 @@ export default function App() {
                     </Text>
                   </View>
 
-                  {isThemeUnlocked(detailSanctuary, checkIns.length, premium) && sanctuaryTheme !== detailSanctuary.key ? (
+                  {isThemeUnlocked(detailSanctuary, totalReflectionDays, premium) && sanctuaryTheme !== detailSanctuary.key ? (
                     <Pressable
                       style={[styles.themeApplyButton, { backgroundColor: appTheme.button, marginBottom: 18 }]}
                       onPress={() => {
@@ -5847,6 +6558,11 @@ const styles = StyleSheet.create({
     textAlign: "center",
     paddingHorizontal: 8,
   },
+  fitDivider: {
+    height: 1,
+    marginVertical: 8,
+    opacity: 0.75,
+  },
   anotherPromptButton: {
     marginTop: 4,
     minHeight: 30,
@@ -6037,6 +6753,25 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     marginBottom: 10,
   },
+  fitInsightPreview: {
+    width: "100%",
+    minHeight: 142,
+    borderRadius: 32,
+    borderWidth: 1,
+    paddingTop: 18,
+    paddingBottom: 12,
+    paddingHorizontal: 24,
+    marginBottom: 10,
+    overflow: "hidden",
+  },
+  fitInsightPreviewNarrow: {
+    paddingHorizontal: 20,
+  },
+  fitInsightPreviewShort: {
+    minHeight: 126,
+    paddingTop: 14,
+    paddingBottom: 8,
+  },
   fitStatusText: {
     fontSize: 12,
     fontWeight: "800",
@@ -6108,6 +6843,12 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     letterSpacing: -0.6,
     marginBottom: 8,
+    width: "100%",
+    flexShrink: 1,
+  },
+  fitSubmittedTitleNarrow: {
+    fontSize: 20,
+    lineHeight: 24,
   },
   fitSubmittedTitleShort: {
     fontSize: 18,
@@ -6117,7 +6858,12 @@ const styles = StyleSheet.create({
     color: "#D4D8E0",
     fontSize: 14,
     lineHeight: 20,
-    maxHeight: 40,
+    width: "100%",
+    flexShrink: 1,
+  },
+  fitSubmittedBodyNarrow: {
+    fontSize: 13,
+    lineHeight: 18,
   },
   fitSubmittedBodyShort: {
     fontSize: 12,
@@ -6933,6 +7679,12 @@ const styles = StyleSheet.create({
     gap: 5,
     minWidth: 0,
   },
+  fitSeeMoreButton: {
+    alignSelf: "flex-start",
+    minHeight: 30,
+    justifyContent: "center",
+    marginTop: 4,
+  },
   sanctuaryStatCopy: {
     flex: 1,
     minWidth: 0,
@@ -7515,6 +8267,19 @@ const styles = StyleSheet.create({
     color: "#B894FF",
     fontSize: 14,
     fontWeight: "700",
+  },
+  deleteInsightButton: {
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    borderWidth: 1,
+    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  deleteInsightButtonText: {
+    color: "#FECACA",
+    fontSize: 13,
+    fontWeight: "800",
   },
   youContent: {
     paddingBottom: 100,

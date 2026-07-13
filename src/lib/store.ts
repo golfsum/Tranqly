@@ -14,6 +14,14 @@ import {
 } from "./types";
 import { DEFAULT_NOTIFICATION_SETTINGS } from "./notifications";
 import {
+  buildDemoCheckIns,
+  buildDemoCoachNotes,
+  buildDemoDeepInsight,
+  buildDemoMoods,
+  isDemoCheckIn,
+  isDemoNote,
+} from "./demoData";
+import {
   DEFAULT_SANCTUARY_SCENES,
   duplicateScene,
   nextSceneVersion,
@@ -37,6 +45,7 @@ export interface AppState {
   moods: Record<string, Mood>; // dateKey -> mood
   settings: Settings;
   lastDeepInsight: DeepInsight | null;
+  weeklyInsights: DeepInsight[];
   coachUsage: { dateKey: string; count: number };
   coachNotes: string[]; // what the coach has learned about the user
   sanctuaryScenes: SanctuarySceneConfig[];
@@ -50,9 +59,12 @@ export interface AppState {
   ) => CheckIn;
   addCoachNote: (note: string) => void;
   clearCoachNotes: () => void;
+  removeCoachNote: (note: string) => void;
   attachReply: (id: string, reply: CoachReply) => void;
   deleteCheckIn: (id: string) => void;
   deleteAllReflections: () => void;
+  addDemoData: () => void;
+  removeDemoData: () => void;
   setMood: (mood: Mood) => void;
   updateSettings: (patch: Partial<Settings>) => void;
   setDeepInsight: (insight: DeepInsight) => void;
@@ -76,10 +88,27 @@ export interface RemoteSnapshot {
   moods: Record<string, Mood>;
   settings: Settings;
   coachNotes?: string[];
+  weeklyInsights?: DeepInsight[];
   updatedAt: string;
 }
 
 const MAX_COACH_NOTES = 20;
+
+function weeklyInsightKey(insight: DeepInsight) {
+  const date = new Date(insight.weekStart ?? insight.createdAt);
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() - date.getDay());
+  return insight.weekStart ?? date.toISOString().slice(0, 10);
+}
+
+function dedupeWeeklyInsights(insights: DeepInsight[]) {
+  const byWeek = new Map<string, DeepInsight>();
+  for (const insight of [...insights].sort((a, b) => b.createdAt.localeCompare(a.createdAt))) {
+    const key = weeklyInsightKey(insight);
+    if (!byWeek.has(key)) byWeek.set(key, insight);
+  }
+  return [...byWeek.values()].slice(0, 52);
+}
 
 const defaultSettings: Settings = {
   name: "",
@@ -101,6 +130,7 @@ export const useApp = create<AppState>()(
       moods: {},
       settings: defaultSettings,
       lastDeepInsight: null,
+      weeklyInsights: [],
       coachUsage: { dateKey: todayKey(), count: 0 },
       coachNotes: [],
       sanctuaryScenes: DEFAULT_SANCTUARY_SCENES,
@@ -122,6 +152,7 @@ export const useApp = create<AppState>()(
 
       clearCoachNotes: () =>
         set({ coachNotes: [], updatedAt: new Date().toISOString() }),
+      removeCoachNote: (note) => set((s) => ({ coachNotes: s.coachNotes.filter((item) => item !== note), updatedAt: new Date().toISOString() })),
 
       addCheckIn: (text, meta) => {
         const entry: CheckIn = {
@@ -160,8 +191,49 @@ export const useApp = create<AppState>()(
           checkIns: [],
           coachNotes: [],
           lastDeepInsight: null,
+          weeklyInsights: [],
           moods: {},
           updatedAt: new Date().toISOString(),
+        }),
+
+      addDemoData: () =>
+        set((s) => {
+          const demoCheckIns = buildDemoCheckIns();
+          const existingReal = s.checkIns.filter((entry) => !isDemoCheckIn(entry));
+          const demoMoods = buildDemoMoods();
+          const demoNotes = buildDemoCoachNotes();
+          return {
+            checkIns: [...demoCheckIns, ...existingReal].sort((a, b) =>
+              b.createdAt.localeCompare(a.createdAt)
+            ),
+            moods: { ...demoMoods, ...s.moods },
+            coachNotes: [
+              ...demoNotes,
+              ...s.coachNotes.filter((note) => !isDemoNote(note)),
+            ].slice(0, MAX_COACH_NOTES),
+            lastDeepInsight: buildDemoDeepInsight(),
+            weeklyInsights: [buildDemoDeepInsight(), ...s.weeklyInsights.filter((insight) => !insight.isDemo)],
+            updatedAt: new Date().toISOString(),
+          };
+        }),
+
+      removeDemoData: () =>
+        set((s) => {
+          const demoDateKeys = new Set(buildDemoCheckIns().map((entry) => entry.dateKey));
+          const remainingCheckIns = s.checkIns.filter((entry) => !isDemoCheckIn(entry));
+          const remainingDateKeys = new Set(remainingCheckIns.map((entry) => entry.dateKey));
+          const remainingMoods = { ...s.moods };
+          for (const dateKey of demoDateKeys) {
+            if (!remainingDateKeys.has(dateKey)) delete remainingMoods[dateKey];
+          }
+          return {
+            checkIns: remainingCheckIns,
+            moods: remainingMoods,
+            coachNotes: s.coachNotes.filter((note) => !isDemoNote(note)),
+            lastDeepInsight: s.lastDeepInsight?.isDemo ? null : s.lastDeepInsight,
+            weeklyInsights: s.weeklyInsights.filter((insight) => !insight.isDemo),
+            updatedAt: new Date().toISOString(),
+          };
         }),
 
       setMood: (mood) =>
@@ -176,7 +248,10 @@ export const useApp = create<AppState>()(
           updatedAt: new Date().toISOString(),
         })),
 
-      setDeepInsight: (insight) => set({ lastDeepInsight: insight }),
+      setDeepInsight: (insight) => set((s) => ({
+        lastDeepInsight: insight,
+        weeklyInsights: dedupeWeeklyInsights([insight, ...s.weeklyInsights]),
+      })),
 
       canUseCoach: () => {
         const state = get();
@@ -320,9 +395,12 @@ export const useApp = create<AppState>()(
         const coachNotes = [
           ...new Set([...(remote.coachNotes ?? []), ...local.coachNotes]),
         ].slice(0, MAX_COACH_NOTES);
+        const weeklyInsights = dedupeWeeklyInsights([...(remote.weeklyInsights ?? []), ...local.weeklyInsights]);
         set({
           checkIns,
           coachNotes,
+          weeklyInsights,
+          lastDeepInsight: weeklyInsights[0] ?? local.lastDeepInsight,
           moods: remoteNewer
             ? { ...local.moods, ...remote.moods }
             : { ...remote.moods, ...local.moods },
@@ -350,8 +428,8 @@ export const useApp = create<AppState>()(
       },
 
       snapshot: () => {
-        const { checkIns, moods, settings, coachNotes, updatedAt } = get();
-        return { checkIns, moods, settings, coachNotes, updatedAt };
+        const { checkIns, moods, settings, coachNotes, weeklyInsights, updatedAt } = get();
+        return { checkIns, moods, settings, coachNotes, weeklyInsights, updatedAt };
       },
 
       setHydrated: () => set({ hydrated: true }),
@@ -363,6 +441,7 @@ export const useApp = create<AppState>()(
         moods: s.moods,
         settings: s.settings,
         lastDeepInsight: s.lastDeepInsight,
+        weeklyInsights: s.weeklyInsights,
         coachUsage: s.coachUsage,
         coachNotes: s.coachNotes,
         sanctuaryScenes: s.sanctuaryScenes,
@@ -390,6 +469,11 @@ export const useApp = create<AppState>()(
               ? p.sanctuaryScenes
               : current.sanctuaryScenes,
           sanctuarySceneVersions: p.sanctuarySceneVersions ?? current.sanctuarySceneVersions,
+          weeklyInsights: p.weeklyInsights?.length
+            ? dedupeWeeklyInsights(p.weeklyInsights)
+            : p.lastDeepInsight
+              ? [p.lastDeepInsight]
+              : current.weeklyInsights,
         };
       },
       onRehydrateStorage: () => (state) => state?.setHydrated(),

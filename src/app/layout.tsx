@@ -3,9 +3,10 @@ import "./globals.css";
 import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
 import ThemeApplier from "@/components/ThemeApplier";
 
-const SHOW_COMING_SOON =
-  process.env.NEXT_PUBLIC_TRANQLY_COMING_SOON === "true" ||
-  process.env.TRANQLY_COMING_SOON === "true";
+const COMING_SOON_FLAG =
+  process.env.NEXT_PUBLIC_TRANQLY_COMING_SOON ??
+  process.env.TRANQLY_COMING_SOON;
+const SHOW_COMING_SOON = COMING_SOON_FLAG === "true";
 
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || "https://tranqly.com"),

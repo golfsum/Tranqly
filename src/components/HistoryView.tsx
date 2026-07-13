@@ -1,10 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { SanctuaryCard, SanctuaryModal } from "./Sanctuary";
+import { SanctuaryCard, SanctuaryCollection, SanctuaryCollectionModal, SanctuaryModal } from "./Sanctuary";
+import { isDemoCheckIn } from "@/lib/demoData";
 import { bestStreak, currentStreak } from "@/lib/streak";
 import { useApp } from "@/lib/store";
-import type { CheckIn, CoachReply } from "@/lib/types";
+import type { CheckIn, CoachReply, DeepInsight } from "@/lib/types";
+import { currentWeekReflectionDayCount } from "@/lib/sanctuaryProgress";
 
 const TAG_RULES = [
   { key: "calm", label: "Calm", pattern: /calm|peace|slow|quiet|rest|walk|outside|breathe|present/i },
@@ -114,9 +116,18 @@ export default function HistoryView({
 }) {
   const checkIns = useApp((s) => s.checkIns);
   const coachNotes = useApp((s) => s.coachNotes);
+  const lastDeepInsight = useApp((s) => s.lastDeepInsight);
+  const weeklyInsights = useApp((s) => s.weeklyInsights);
+  const premium = useApp((s) => s.settings.premium);
+  const theme = useApp((s) => s.settings.theme);
+  const updateSettings = useApp((s) => s.updateSettings);
   const best = bestStreak(checkIns);
   const streak = currentStreak(checkIns);
+  const hasDemoData = checkIns.some(isDemoCheckIn);
   const [showSanctuary, setShowSanctuary] = useState(false);
+  const [showCollection, setShowCollection] = useState(false);
+  const [selectedWeeklyInsight, setSelectedWeeklyInsight] = useState<DeepInsight | null>(null);
+  const [showWeeklyHistory, setShowWeeklyHistory] = useState(false);
   const [showAllReflections, setShowAllReflections] = useState(false);
   const journey = useMemo(() => buildJourneyInsights(checkIns, coachNotes), [checkIns, coachNotes]);
   const sortedReflections = useMemo(
@@ -150,7 +161,7 @@ export default function HistoryView({
         </p>
         <h1 className="mt-1 text-3xl font-black tracking-tight">Your journey</h1>
         <p className="mt-1 text-sm text-dim">
-          Today. This week. This month. Your growth.
+          Watch your growth unfold over time.
         </p>
       </header>
 
@@ -158,6 +169,21 @@ export default function HistoryView({
         checkIns={checkIns}
         currentStreak={streak}
         onOpen={() => setShowSanctuary(true)}
+      />
+
+      <SanctuaryCollection checkIns={checkIns} onOpen={() => setShowCollection(true)} />
+
+      <WeeklyReflectionSection
+        premium={premium}
+        hasDemoData={hasDemoData}
+        insight={lastDeepInsight}
+        historyCount={weeklyInsights.length}
+        reflectionDays={currentWeekReflectionDayCount(checkIns)}
+        onNeedPremium={onNeedPremium}
+        onOpen={() => {
+          setSelectedWeeklyInsight(weeklyInsights[0] ?? lastDeepInsight);
+          setShowWeeklyHistory(true);
+        }}
       />
 
       <section className="rounded-xl2 border border-sea/25 bg-gradient-to-br from-card to-[#123733] p-4 shadow-card">
@@ -174,16 +200,16 @@ export default function HistoryView({
 
       <section className="rounded-xl2 border border-calm/20 bg-gradient-to-br from-card to-[#101D24] p-4 shadow-card">
         <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-calm">
-          Patterns Growing
+          Patterns I&apos;ve Noticed
         </p>
         <div className="mt-3 flex flex-col gap-2">
           {journey.memoryFacts.map((fact) => (
-            <div key={fact} className="flex items-start gap-2 rounded-2xl border border-edge bg-ink/55 px-3 py-2">
+            <button type="button" key={fact} onClick={() => window.alert(`${fact}\n\nThis is a gentle observation based on your recent reflections, not a definitive conclusion.`)} className="flex min-h-[44px] w-full items-start gap-2 rounded-2xl border border-edge bg-ink/55 px-3 py-2 text-left">
               <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-calm/10 text-xs font-black text-calm">
                 &rsaquo;
               </span>
               <p className="text-sm leading-relaxed text-dim">{fact}</p>
-            </div>
+            </button>
           ))}
         </div>
         <p className="mt-3 text-xs font-semibold text-faint">Updated today</p>
@@ -217,24 +243,6 @@ export default function HistoryView({
         ))}
       </section>
 
-      <section className="rounded-xl2 border border-calm/25 bg-gradient-to-br from-card to-[#171430] p-4 shadow-card">
-        <div className="mb-2 flex items-center justify-between gap-3">
-          <h2 className="text-xl font-black">Weekly Reflection</h2>
-          <span className="rounded-full bg-ink px-3 py-1 text-[11px] font-bold text-calm">
-            Premium
-          </span>
-        </div>
-        <p className="text-sm leading-relaxed text-dim">
-          Unlock your full weekly reflection every Sunday.
-        </p>
-        <button
-          onClick={onNeedPremium}
-          className="mt-3 min-h-[42px] w-full rounded-2xl border border-calm/30 bg-ink text-sm font-bold text-calm"
-        >
-          Unlock weekly reflection
-        </button>
-      </section>
-
       {showSanctuary && (
         <SanctuaryModal
           checkIns={checkIns}
@@ -243,6 +251,26 @@ export default function HistoryView({
           onClose={() => setShowSanctuary(false)}
         />
       )}
+      {showCollection && (
+        <SanctuaryCollectionModal
+          checkIns={checkIns}
+          currentTheme={theme}
+          onClose={() => setShowCollection(false)}
+          onExplore={(key) => {
+            updateSettings({ theme: key });
+            setShowCollection(false);
+            setShowSanctuary(true);
+          }}
+        />
+      )}
+      {showWeeklyHistory ? (
+        <WeeklyHistoryModal
+          insights={weeklyInsights.length ? weeklyInsights : lastDeepInsight ? [lastDeepInsight] : []}
+          selected={selectedWeeklyInsight}
+          onSelect={setSelectedWeeklyInsight}
+          onClose={() => setShowWeeklyHistory(false)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -285,11 +313,42 @@ function ReflectionCard({
           onClick={() => onViewCoachReply?.(entry.text, entry.reply!)}
           className="mt-3 rounded-full border border-calm/20 bg-calm/10 px-3 py-1.5 text-left text-[12px] font-black text-calm transition hover:bg-calm/15 hover:text-sea"
         >
-          View Tranqly response →
+          View Tranqly Response <span aria-hidden="true">›</span>
         </button>
       ) : null}
     </article>
   );
+}
+
+function WeeklyReflectionSection({ premium, hasDemoData, insight, historyCount, reflectionDays, onNeedPremium, onOpen }: { premium: boolean; hasDemoData: boolean; insight: DeepInsight | null; historyCount: number; reflectionDays: number; onNeedPremium?: () => void; onOpen: () => void }) {
+  const weeklyDays = Math.min(7, reflectionDays);
+  const ready = weeklyDays === 7;
+  return (
+    <section className="rounded-xl2 border border-calm/25 bg-gradient-to-br from-card to-[#171430] p-4 shadow-card">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-[0.18em] text-calm">Weekly Reflection</p>
+          <h2 className="mt-1 text-lg font-black">{ready ? "Your weekly reflection is ready." : "Your weekly reflection is still building."}</h2>
+        </div>
+        <span className="text-xs font-bold text-dim">Sunday</span>
+      </div>
+      <div className="mt-3 flex gap-1.5">{Array.from({ length: 7 }, (_, index) => <span key={index} className={`h-1.5 flex-1 rounded-full ${index < weeklyDays ? "bg-calm" : "bg-ink"}`} />)}</div>
+      <p className="mt-2 text-xs font-bold text-dim">{weeklyDays} of 7 complete</p>
+      {ready && insight && (premium || hasDemoData) ? <div className="mt-3 space-y-2"><h3 className="font-black">{insight.headline}</h3><p className="text-sm leading-relaxed text-dim">{insight.insight}</p></div> : null}
+      {historyCount > 0 || insight ? <button onClick={onOpen} className="mt-3 min-h-[42px] w-full rounded-2xl border border-calm/30 bg-calm/10 text-sm font-bold text-calm">{historyCount > 1 ? "View Weekly Reflection History" : "Read Weekly Reflection"}</button> : null}
+      {ready && !premium && !hasDemoData ? <button onClick={onNeedPremium} className="mt-3 min-h-[42px] w-full rounded-2xl border border-calm/30 bg-ink text-sm font-bold text-calm">Read Weekly Reflection</button> : null}
+    </section>
+  );
+}
+
+function WeeklyHistoryModal({ insights, selected, onSelect, onClose }: { insights: DeepInsight[]; selected: DeepInsight | null; onSelect: (insight: DeepInsight) => void; onClose: () => void }) {
+  return <div className="fixed inset-0 z-50 flex items-end bg-black/70 p-3 backdrop-blur-sm sm:items-center sm:justify-center">
+    <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-[2rem] border border-edge bg-card p-5 shadow-card">
+      <div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-black uppercase tracking-[0.18em] text-calm">Weekly Reflections</p><h2 className="mt-1 text-2xl font-black">Weekly Reflection History</h2></div><button onClick={onClose} className="min-h-[44px] rounded-full border border-edge bg-ink px-4 text-sm font-bold text-dim">Close</button></div>
+      {selected ? <div className="mt-4 rounded-2xl border border-calm/25 bg-ink/70 p-4"><p className="text-xs font-bold text-faint">Week of {new Date(selected.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</p><h3 className="mt-2 text-xl font-black">{selected.headline}</h3><p className="mt-2 text-sm leading-relaxed text-dim">{selected.insight}</p><div className="mt-3 rounded-2xl border border-calm/20 bg-calm/10 p-3"><p className="text-[10px] font-black uppercase tracking-[0.16em] text-calm">This week&apos;s experiment</p><p className="mt-1 text-sm text-fg">{selected.suggestion}</p></div></div> : <p className="mt-6 text-sm text-dim">Your first weekly reflection will appear here when it is ready.</p>}
+      {insights.length > 1 ? <div className="mt-5 space-y-2"><p className="text-xs font-black uppercase tracking-[0.16em] text-faint">Previous weeks</p>{insights.map((insight) => <button key={insight.createdAt} onClick={() => onSelect(insight)} className={`min-h-[56px] w-full rounded-2xl border p-3 text-left ${selected?.createdAt === insight.createdAt ? "border-calm/50 bg-calm/10" : "border-edge bg-ink/55"}`}><p className="text-xs text-faint">{new Date(insight.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</p><p className="mt-1 font-bold text-fg">{insight.headline}</p></button>)}</div> : null}
+    </div>
+  </div>;
 }
 
 function ProgressTile({

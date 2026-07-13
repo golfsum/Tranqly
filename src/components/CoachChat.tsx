@@ -220,11 +220,14 @@ export default function CoachChat({
             .slice(0, 4)
             .map((c) => ({ prompt: c.prompt, promptType: c.promptType, promptWhy: c.promptWhy }))
             .filter((item) => item.prompt),
+          recentHelpfulFeedback: JSON.parse(window.localStorage.getItem("tranqly-response-feedback") ?? "[]").slice(0, 5),
           currentSanctuary: sanctuaryTheme,
           userPlan: premium ? "plus" : "free",
           recentEntries: checkIns.slice(0, 5).map((c) => ({
             text: c.text,
             dateKey: c.dateKey,
+            previousInsight: c.reply?.message,
+            tags: c.reply?.tags ?? c.reply?.themes,
           })),
         }),
       });
@@ -236,6 +239,8 @@ export default function CoachChat({
             message: data.message,
             nextStep: data.nextStep,
             title: data.title,
+            preview: data.preview,
+            nudgeLabel: data.nudgeLabel,
             pattern: data.pattern,
             summary: data.summary,
             themes: data.themes,
@@ -412,7 +417,33 @@ export default function CoachChat({
         <div className="flex min-h-0 flex-1 flex-col gap-2">
         <section className="flex min-h-0 flex-1 flex-col gap-2 rounded-xl2 border border-edge bg-card p-3 shadow-card short-fit:gap-1.5 short-fit:p-2.5">
           <p className="text-[11px] font-bold uppercase tracking-wide text-calm">
-            Today's Reflection
+            Today's Insight
+          </p>
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            role="button"
+            tabIndex={0}
+            onClick={() => onReply?.(latestToday.text, latestToday.reply!)}
+            onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onReply?.(latestToday.text, latestToday.reply!); }}
+            className="flex min-h-[142px] w-full min-w-0 max-w-full cursor-pointer flex-col overflow-hidden rounded-[2rem] border border-edge bg-ink/70 px-5 py-4 short-fit:min-h-[126px] short-fit:px-4 short-fit:py-3"
+          >
+            <h2 className="line-clamp-2 w-full min-w-0 max-w-full break-words text-lg font-black leading-tight tracking-tight short-fit:text-base">
+              {latestToday.reply.title ?? "Today I noticed..."}
+            </h2>
+            <p className="mt-2 line-clamp-2 w-full min-w-0 max-w-full break-words text-sm leading-relaxed text-dim short-fit:mt-1">
+              {latestToday.reply.preview ?? latestToday.reply.message}
+            </p>
+            <button
+              onClick={() => onReply?.(latestToday.text, latestToday.reply!)}
+              className="mt-auto min-h-[30px] self-start text-left text-xs font-black text-calm"
+            >
+              See more →
+            </button>
+          </motion.div>
+          <div className="h-px bg-edge/70" />
+          <p className="text-[11px] font-bold uppercase tracking-wide text-calm">
+            Ask a follow-up
           </p>
             <div className="flex flex-col items-center gap-2 pt-5 short-fit:pt-3">
               {voiceSupported && (
@@ -477,10 +508,10 @@ export default function CoachChat({
               disabled={!text.trim() || pendingId !== null || transcribing}
               className="flex min-h-[42px] w-full items-center justify-center rounded-2xl border border-calm/20 bg-button text-sm font-bold text-fg shadow-glow disabled:border-edge disabled:bg-card disabled:text-dim disabled:shadow-none"
             >
-              {pendingId ? "Getting insights..." : "Get Insights"}
+              {pendingId ? "Getting insights..." : "Continue Conversation"}
             </motion.button>
         </section>
-        <motion.section
+        {false && <motion.section
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           className="shrink-0 rounded-xl2 border border-edge bg-card p-3 shadow-card short-fit:p-2.5"
@@ -489,20 +520,20 @@ export default function CoachChat({
             Today's Insight
           </p>
           <h2 className="mt-1 text-lg font-black tracking-tight short-fit:text-base">
-            {latestToday.reply.title ?? "Today I noticed..."}
+            {latestToday.reply?.title ?? "Today I noticed..."}
           </h2>
           <div className="mt-2 rounded-2xl border border-edge bg-ink/70 p-3">
             <p className="line-clamp-2 text-sm leading-relaxed text-dim">
-              {latestToday.reply.message}
+              {latestToday.reply?.message}
             </p>
           </div>
           <button
-            onClick={() => onReply?.(latestToday.text, latestToday.reply!)}
+            onClick={() => latestToday.reply && onReply?.(latestToday.text, latestToday.reply)}
             className="mt-2 text-left text-xs font-black text-calm"
           >
             See more →
           </button>
-        </motion.section>
+        </motion.section>}
         </div>
         </>
       ) : (
@@ -628,14 +659,14 @@ export default function CoachChat({
           />
         </section>
 
-        <div className="rounded-2xl border border-sea/20 bg-sea/10 px-3 py-1.5 short-fit:py-1">
+        {false && <div className="rounded-2xl border border-sea/20 bg-sea/10 px-3 py-1.5 short-fit:py-1">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-sea">
             Need a little help?
           </p>
           <p className="mt-0.5 text-sm leading-snug text-dim short-fit:text-xs">
             {inspirationFor(text)}
           </p>
-        </div>
+        </div>}
 
         <motion.button
           whileTap={{ scale: 0.97 }}

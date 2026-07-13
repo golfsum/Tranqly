@@ -90,7 +90,7 @@ export const DEFAULT_SANCTUARY_SCENES: SanctuarySceneConfig[] = [
   },
   {
     id: "ocean-calm",
-    name: "Ocean Calm",
+    name: "Ocean Shore",
     status: "live",
     requiredPreviousSceneId: "twilight-grove",
     unlockRequirementType: "complete_previous_scene",

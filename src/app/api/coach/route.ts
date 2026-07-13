@@ -12,13 +12,14 @@ interface CoachPayload {
   text?: string;
   mood?: string;
   streak: number;
-  recentEntries: { text: string; dateKey: string }[];
+  recentEntries: { text: string; dateKey: string; previousInsight?: string; tags?: string[] }[];
   learnedNotes?: string[];
   prompt?: string;
   promptType?: string;
   promptWhy?: string;
   memoryProfileSummary?: string[];
   recentPromptHistory?: { prompt?: string; promptType?: string; promptWhy?: string }[];
+  recentHelpfulFeedback?: { insightType?: string; helpful: boolean; reason?: string }[];
   currentSanctuary?: string;
   userId?: string;
   userPlan?: "free" | "plus";
@@ -28,13 +29,14 @@ const REPLY_SCHEMA = {
   type: "object",
   properties: {
     title: { type: "string" },
-    insight: { type: "string" },
-    pattern: { type: "string" },
-    next_step: {
+    preview: { type: "string" },
+    what_stood_out: { type: "string" },
+    gentle_nudge: {
       type: "string",
-      description:
-        "One actionable, realistic, gentle next step (under 30 words). Small and doable, never demanding.",
+      description: "One small optional nudge, question, observation, or reassurance.",
     },
+    nudge_label: { type: "string", enum: ["A Gentle Next Step", "Something to Try", "A Question to Carry", "Something to Notice", "A Little Reassurance"] },
+    pattern: { type: "string", description: "Empty string unless at least three total relevant reflections support a relationship." },
     summary: { type: "string" },
     themes: { type: "array", items: { type: "string" } },
     tags: { type: "array", items: { type: "string" } },
@@ -51,9 +53,11 @@ const REPLY_SCHEMA = {
   },
   required: [
     "title",
-    "insight",
+    "preview",
+    "what_stood_out",
+    "gentle_nudge",
+    "nudge_label",
     "pattern",
-    "next_step",
     "summary",
     "themes",
     "tags",
@@ -111,20 +115,29 @@ const CLASSIFIER_PROMPT =
   "Return only the requested JSON.";
 
 const SYSTEM_PROMPT =
-  "You are Tranqly, an AI reflection coach that remembers. Your job is to " +
-  "help users reflect on their own experiences. You are only a reflection companion. " +
+  "You are Tranqly, a calm daily reflection companion. Your job is not to summarize everything the user said. " +
+  "Notice the most meaningful detail, explain why it may matter, and offer either a small helpful nudge or appropriate reassurance. The user should finish reading feeling genuinely understood. " +
+  "Use specific details from the current reflection. When history is provided, connect it only when the evidence is strong and relevant. " +
+  "Use at least one concrete detail from the current reflection, then identify one deeper emotional or practical meaning without simply repeating the entry. Consider shared adjustments, changing routines, relationships, energy, effort, or awareness when those meanings are supported. " +
+  "Do not diagnose, exaggerate, moralize, blame anyone, or act like a therapist. Do not invent emotions or motives. Use tentative language when interpreting meaning. " +
+  "The response must identify what mattered beneath the surface details, reflect the situation with warmth and accuracy, and offer one small realistic next step, question, observation, or reassurance. " +
+  "Mention a longer-term pattern only when at least two earlier relevant reflections support it. Otherwise return an empty pattern. " +
+  "Title must be 3 to 7 natural words, at most 55 characters, with no ending period. Write it as a memorable observation, not a factual recap. Favor ideas such as adapting, awareness, grace, steadiness, or a changing rhythm when the reflection supports them. " +
+  "Preview must be at most 125 characters, complete its thought, and add a new layer of meaning. Never repeat or lightly rephrase the title in the preview. " +
+  "What stood out must reference one or two concrete details and explain why they may matter without claiming certainty. Gentle nudge must be optional and directly relevant. Choose a nudge label that accurately describes its content. " +
+  "Do not merely repeat dates, times, names, or events. Do not force advice when reassurance is more appropriate. Ground reassurance in an awareness or strength the entry actually demonstrates. Do not invent praise. " +
+  "Suggestions must be optional, manageable on a difficult day, and phrased with words such as may, might, could, or if it helps. Tie the suggestion to a concrete person, routine, constraint, or detail the user shared instead of giving generic sleep, wellness, or productivity advice. Never tell the user what they must do. " +
+  "Avoid negative or blaming labels such as bad night, failed, mistake, problem, unhealthy, poor choice, not enough, broken, or you need to. Prefer compassionate descriptions such as difficult night, disrupted night, a change in routine, finding a new rhythm, noticing what helps, or giving yourself time to adjust. " +
+  "You are only a reflection companion. " +
   "Do not answer programming, trivia, math, homework, shopping, recipes, factual research, " +
   "translation, or general knowledge requests. Never answer unrelated knowledge questions. " +
   "If the user asks something unrelated to their personal reflection, politely explain that " +
   "Tranqly is designed for reflection and invite them to talk about themselves instead.\n\n" +
-  "notice the specific thing the user shared, name what it may mean, and make " +
+  "Notice the specific thing the user shared, name what it may mean, and make " +
   "the reply feel personal. Do not give generic encouragement. Do not start " +
   "with thanks for sharing. Do not say it sounds like you're processing " +
-  "something real. Refer directly to the user's actual words.\n\n" +
-  "Structure the message as 2 to 4 short sentences. First, name the concrete " +
-  "detail you noticed. Second, reflect what it may reveal about energy, stress, " +
-  "care, progress, avoidance, connection, rest, or consistency. Third, if " +
-  "there is history, connect it gently to a pattern. Never overclaim.\n\n" +
+  "something real. Avoid therapy-like phrases such as 'what your body is asking for.' Use natural alternatives such as noticing what you need, not brushing it aside, or taking a moment to check in. Refer directly to the user's actual words.\n\n" +
+  "Keep whatStoodOut to 2 to 4 concise sentences. Keep every section natural and concise, and never overclaim.\n\n" +
   "Write like a caring friend texting, not like an essay. Use contractions " +
   "and plain, warm words. Never use em dashes or semicolons; use short " +
   "sentences and commas instead. No bullet points, no headers, no emoji. " +
@@ -142,6 +155,46 @@ const SYSTEM_PROMPT =
   "Only set should_save_memory to true when the memory is durable and useful " +
   "for future personalization. Do not save random one-off events, sensitive details, " +
   "general trivia, or temporary moods.";
+
+const INSIGHT_LIMITS = { title: 55, preview: 125, whatStoodOut: 420, gentleNudge: 260, pattern: 300 } as const;
+
+function cleanText(value: unknown) {
+  return typeof value === "string" ? value.replace(/[—;]/g, ",").replace(/\s+/g, " ").trim() : "";
+}
+
+function withinSentenceLimit(value: string, max: number) {
+  if (value.length <= max) return value;
+  const clipped = value.slice(0, max + 1);
+  const sentenceEnd = Math.max(clipped.lastIndexOf("."), clipped.lastIndexOf("?"), clipped.lastIndexOf("!"));
+  if (sentenceEnd >= Math.floor(max * 0.55)) return clipped.slice(0, sentenceEnd + 1).trim();
+  const wordEnd = clipped.lastIndexOf(" ", max - 1);
+  return `${clipped.slice(0, wordEnd > 0 ? wordEnd : max - 1).trim()}…`;
+}
+
+function normalizedForComparison(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").trim();
+}
+
+function distinctPreview(title: string, preview: string, whatStoodOut: string) {
+  const normalizedTitle = normalizedForComparison(title);
+  const normalizedPreview = normalizedForComparison(preview);
+  const repeatsTitle = normalizedPreview === normalizedTitle ||
+    normalizedPreview.startsWith(normalizedTitle) ||
+    normalizedTitle.startsWith(normalizedPreview);
+  if (!repeatsTitle) return preview;
+
+  const sentences = whatStoodOut.match(/[^.!?]+[.!?]?/g)?.map((sentence) => sentence.trim()).filter(Boolean) ?? [];
+  const distinctSentence = sentences.find((sentence) => {
+    const normalized = normalizedForComparison(sentence);
+    return normalized && normalized !== normalizedTitle && !normalized.startsWith(normalizedTitle);
+  });
+  return withinSentenceLimit(distinctSentence || whatStoodOut, INSIGHT_LIMITS.preview);
+}
+
+function relevanceScore(current: string, candidate: string) {
+  const words = new Set(current.toLowerCase().match(/[a-z']{4,}/g) ?? []);
+  return (candidate.toLowerCase().match(/[a-z']{4,}/g) ?? []).reduce((score, word) => score + (words.has(word) ? 1 : 0), 0);
+}
 
 const REFLECTION_ONLY_MESSAGE =
   "Tranqly is designed for personal reflection rather than general questions. Tell me about your day, what's on your mind, or how you're feeling, and I'll help you reflect on it.";
@@ -192,9 +245,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ fallback: true, requestId }, { status: 200 });
   }
 
-  const context = (payload.recentEntries ?? [])
+  const relevantPastReflections = (payload.recentEntries ?? [])
+    .map((entry, index) => ({ entry, index, score: relevanceScore(entryText, entry.text) }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || a.index - b.index)
     .slice(0, 5)
-    .map((e) => `- [${e.dateKey}] ${e.text}`)
+    .map(({ entry }) => entry);
+  const context = relevantPastReflections
+    .map((e) => `- [${e.dateKey}] ${e.text}${e.previousInsight ? `\n  Previous insight: ${e.previousInsight}` : ""}${e.tags?.length ? `\n  Tags: ${e.tags.join(", ")}` : ""}`)
     .join("\n");
   const notes = (payload.learnedNotes ?? [])
     .slice(0, 8)
@@ -208,6 +266,7 @@ export async function POST(req: NextRequest) {
     .slice(0, 4)
     .map((item) => `- ${item.promptType ?? "unknown"}: ${item.prompt ?? ""}`)
     .join("\n");
+  const feedbackContext = (payload.recentHelpfulFeedback ?? []).slice(0, 5).map((item) => `- ${item.helpful ? "Helpful" : "Not helpful"}${item.reason ? `: ${item.reason}` : ""}`).join("\n");
 
   try {
     const skipClassifier = looksLikePersonalReflection(entryText);
@@ -262,10 +321,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         blocked: true,
         title: "A reflection space",
+        preview: REFLECTION_ONLY_MESSAGE.slice(0, 125),
         insight: REFLECTION_ONLY_MESSAGE,
-        pattern: "",
+        pattern: null,
         message: REFLECTION_ONLY_MESSAGE,
         nextStep: "Share one sentence about your day or how you're feeling.",
+        nudgeLabel: "A Question to Carry",
         summary: "",
         themes: [],
         tags: [],
@@ -281,19 +342,24 @@ export async function POST(req: NextRequest) {
     }
 
     const { parsed, usage } = await groqJsonChatWithUsage<{
-      title: string;
-      insight: string;
-      pattern: string;
-      next_step: string;
-      summary: string;
-      themes: string[];
-      tags: string[];
-      emotional_tone: string;
-      follow_up_questions: string[];
-      memory_note: string;
-      should_save_memory: boolean;
-      safety_flags: string[];
-      confidence: number;
+      title?: string;
+      preview?: string;
+      what_stood_out?: string;
+      insight?: string;
+      message?: string;
+      gentle_nudge?: string;
+      next_step?: string;
+      nudge_label?: "A Gentle Next Step" | "Something to Try" | "A Question to Carry" | "Something to Notice" | "A Little Reassurance";
+      pattern?: string;
+      summary?: string;
+      themes?: string[];
+      tags?: string[];
+      emotional_tone?: string;
+      follow_up_questions?: string[];
+      memory_note?: string;
+      should_save_memory?: boolean;
+      safety_flags?: string[];
+      confidence?: number;
     }>({
       maxTokens: 700,
       feature: "daily_insight",
@@ -321,8 +387,10 @@ export async function POST(req: NextRequest) {
             (promptHistory
               ? `Recent prompt history:\n${promptHistory}\n\n`
               : "") +
-            (context ? `Their recent reflections:\n${context}\n\n` : "") +
-            "Respond to today's reflection.",
+            (feedbackContext ? `Recent response feedback. Avoid repeating styles marked not helpful:\n${feedbackContext}\n\n` : "") +
+            (context ? `Their recent reflections:\n${context}\n\n` : "There are not enough prior reflections to support a pattern.\n\n") +
+            `${relevantPastReflections.length >= 2 ? "Only include a pattern if at least two earlier reflections support the same relationship." : "Return an empty pattern because there is insufficient evidence."}\n` +
+            "Respond to today's reflection with valid JSON.",
         },
       ],
     });
@@ -340,21 +408,39 @@ export async function POST(req: NextRequest) {
       classification: classification.classification,
       allowed: true,
     }).catch((logErr) => console.warn(`[coach:${requestId}] daily usage log failed`, logErr));
+    const rawTitle = cleanText(parsed.title).replace(/[.!?]+$/, "");
+    const title = (rawTitle.length <= INSIGHT_LIMITS.title ? rawTitle : rawTitle.slice(0, INSIGHT_LIMITS.title).replace(/\s+\S*$/, "")).trim() || "What stood out today";
+    const whatStoodOut = withinSentenceLimit(
+      cleanText(parsed.what_stood_out || parsed.insight || parsed.message || parsed.summary),
+      INSIGHT_LIMITS.whatStoodOut
+    );
+    const proposedPreview = withinSentenceLimit(cleanText(parsed.preview), INSIGHT_LIMITS.preview) || withinSentenceLimit(whatStoodOut, INSIGHT_LIMITS.preview);
+    const preview = distinctPreview(title, proposedPreview, whatStoodOut);
+    const gentleNudge = withinSentenceLimit(
+      cleanText(parsed.gentle_nudge || parsed.next_step),
+      INSIGHT_LIMITS.gentleNudge
+    ) || "If it helps, carry this awareness with you and notice what feels different next time.";
+    if (!whatStoodOut || !preview || !gentleNudge) throw new Error("Invalid empty insight fields");
+    const supportedPattern = relevantPastReflections.length >= 2 ? withinSentenceLimit(cleanText(parsed.pattern), INSIGHT_LIMITS.pattern) || null : null;
     return NextResponse.json({
-      title: parsed.title || "Today I noticed...",
-      insight: parsed.insight,
-      pattern: parsed.pattern,
-      message: parsed.insight,
-      nextStep: parsed.next_step,
-      summary: parsed.summary,
-      themes: parsed.themes,
-      tags: parsed.tags,
-      emotionalTone: parsed.emotional_tone,
-      followUpQuestions: parsed.follow_up_questions,
+      title,
+      preview,
+      whatStoodOut,
+      gentleNudge,
+      nudgeLabel: parsed.nudge_label || "Something to Notice",
+      insight: whatStoodOut,
+      pattern: supportedPattern,
+      message: whatStoodOut,
+      nextStep: gentleNudge,
+      summary: cleanText(parsed.summary) || preview,
+      themes: Array.isArray(parsed.themes) ? parsed.themes : [],
+      tags: Array.isArray(parsed.tags) ? parsed.tags : [],
+      emotionalTone: cleanText(parsed.emotional_tone) || "reflective",
+      followUpQuestions: Array.isArray(parsed.follow_up_questions) ? parsed.follow_up_questions : [],
       memoryNote: parsed.should_save_memory ? parsed.memory_note?.trim() || undefined : undefined,
       shouldSaveMemory: parsed.should_save_memory,
-      safetyFlags: parsed.safety_flags,
-      confidence: parsed.confidence,
+      safetyFlags: Array.isArray(parsed.safety_flags) ? parsed.safety_flags : [],
+      confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.7,
       classification: classification.classification,
       source: "ai",
       requestId,
@@ -387,13 +473,24 @@ export async function POST(req: NextRequest) {
         errorCode: err instanceof Error ? err.message.slice(0, 120) : "coach_failed",
       }),
     ]);
+    const failureReason = err instanceof Error
+      ? err.message.includes("429") ? "provider_rate_limited"
+        : err.message.includes("JSON") ? "invalid_provider_json"
+          : err.message.includes("Invalid empty") ? "invalid_ai_fields"
+            : err.message.includes("Groq chat failed") ? "provider_request_failed"
+              : "coach_generation_failed"
+      : "coach_generation_failed";
     return NextResponse.json({
       error: "ai_unavailable",
       title: "Insight unavailable",
+      preview: "Your reflection was saved. Tranqly can try generating the insight again in a moment.",
       message: AI_UNAVAILABLE_MESSAGE,
       nextStep: "Try again in a moment.",
+      nudgeLabel: "A Little Reassurance",
+      pattern: null,
       source: "local",
       requestId,
+      failureReason,
     }, { status: 200 });
   }
 }

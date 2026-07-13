@@ -38,7 +38,7 @@ export interface Theme {
 export const THEMES: Theme[] = [
   {
     key: "blossom",
-    label: "Lotus Blossom",
+    label: "Blossom Garden",
     emoji: "lotus",
     icon: "lotus",
     feeling: "Peace, reflection, new beginnings",
@@ -69,7 +69,7 @@ export const THEMES: Theme[] = [
     calmRgb: "231 166 216",
     seaRgb: "189 169 255",
     unlockType: "reflections",
-    unlockReflections: 0,
+    unlockReflections: 14,
   },
   {
     key: "twilight",
@@ -104,11 +104,11 @@ export const THEMES: Theme[] = [
     calmRgb: "184 148 255",
     seaRgb: "216 196 255",
     unlockType: "reflections",
-    unlockReflections: 5,
+    unlockReflections: 0,
   },
   {
     key: "ocean",
-    label: "Ocean Calm",
+    label: "Ocean Shore",
     emoji: "wave",
     icon: "wave",
     feeling: "Breathe, release, clarity",
@@ -139,7 +139,7 @@ export const THEMES: Theme[] = [
     calmRgb: "135 184 201",
     seaRgb: "242 165 140",
     unlockType: "reflections",
-    unlockReflections: 10,
+    unlockReflections: 21,
   },
   {
     key: "forest",
@@ -174,11 +174,11 @@ export const THEMES: Theme[] = [
     calmRgb: "169 185 155",
     seaRgb: "212 199 161",
     unlockType: "reflections",
-    unlockReflections: 15,
+    unlockReflections: 7,
   },
   {
     key: "sunrise",
-    label: "Sunset Fields",
+    label: "Sunrise Meadow",
     emoji: "sunset",
     icon: "sunset",
     feeling: "Gratitude, hope, closure",
@@ -209,11 +209,11 @@ export const THEMES: Theme[] = [
     calmRgb: "229 166 92",
     seaRgb: "217 137 178",
     unlockType: "reflections",
-    unlockReflections: 20,
+    unlockReflections: 28,
   },
   {
     key: "mountain",
-    label: "Mountain Peak",
+    label: "Mountain Retreat",
     emoji: "mountain",
     icon: "mountain",
     feeling: "Strength, perspective, achievement",
@@ -248,7 +248,7 @@ export const THEMES: Theme[] = [
   },
   {
     key: "misty",
-    label: "Misty Meadow",
+    label: "Misty Hollow",
     emoji: "cloud",
     icon: "cloud",
     feeling: "Fresh start, possibility, gentleness",
@@ -283,7 +283,7 @@ export const THEMES: Theme[] = [
   },
   {
     key: "desert",
-    label: "Desert Dusk",
+    label: "Desert Oasis",
     emoji: "cactus",
     icon: "cactus",
     feeling: "Stillness, simplicity, resilience",
@@ -318,7 +318,7 @@ export const THEMES: Theme[] = [
   },
   {
     key: "snowfall",
-    label: "Snowfall Retreat",
+    label: "Winter Retreat",
     emoji: "snow",
     icon: "snowflake",
     feeling: "Quiet, comfort, peace",
@@ -352,7 +352,7 @@ export const THEMES: Theme[] = [
   },
   {
     key: "northern",
-    label: "Northern Lights",
+    label: "Aurora Valley",
     emoji: "aurora",
     icon: "aurora",
     feeling: "Wonder, awe, inspiration",
@@ -427,7 +427,7 @@ export function themeByKey(key: string): Theme {
 export function themeUnlockLabel(theme: Theme) {
   if (theme.unlockType === "plus") return "Tranqly Plus";
   if (theme.unlockType === "seasonal") return "Seasonal theme";
-  return `Unlocks at ${theme.unlockReflections ?? 0} reflections`;
+  return `Unlocks at ${theme.unlockReflections ?? 0} reflection days`;
 }
 
 export function isThemeUnlocked(theme: Theme, reflectionCount: number, premium = false) {

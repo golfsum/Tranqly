@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useState } from "react";
 import {
   createUserWithEmailAndPassword,
+  deleteUser,
   onAuthStateChanged,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
@@ -15,8 +16,10 @@ import { createSupportTicket, listMySupportTickets, SupportCategory } from "@/li
 import { getFirebase } from "@/lib/firebase";
 import { DEFAULT_NOTIFICATION_SETTINGS, formatHourLabel, QUIET_MINUTE_OPTIONS } from "@/lib/notifications";
 import { getPasswordStrength, isPasswordValid, passwordRuleItems } from "@/lib/authRules";
+import { isDemoCheckIn } from "@/lib/demoData";
 import { useApp } from "@/lib/store";
 import { THEMES, isThemeUnlocked, themeByKey, themeUnlockLabel, themesByUnlockOrder } from "@/lib/themes";
+import { reflectionDayCount, SANCTUARY_PROGRESSION } from "@/lib/sanctuaryProgress";
 
 type ThemeIconName =
   | "lotus"
@@ -187,8 +190,13 @@ export default function SettingsView() {
   const updateSettings = useApp((s) => s.updateSettings);
   const coachNotes = useApp((s) => s.coachNotes);
   const clearCoachNotes = useApp((s) => s.clearCoachNotes);
+  const removeCoachNote = useApp((s) => s.removeCoachNote);
   const deleteAllReflections = useApp((s) => s.deleteAllReflections);
+  const addDemoData = useApp((s) => s.addDemoData);
+  const removeDemoData = useApp((s) => s.removeDemoData);
+  const setPremium = useApp((s) => s.setPremium);
   const checkIns = useApp((s) => s.checkIns);
+  const totalReflectionDays = reflectionDayCount(checkIns);
   const [previewThemeKey, setPreviewThemeKey] = useState(settings.theme);
   const [themePickerOpen, setThemePickerOpen] = useState(false);
   const activeTheme = themeByKey(settings.theme);
@@ -213,6 +221,15 @@ export default function SettingsView() {
   const [notificationDraft, setNotificationDraft] = useState(notificationSettings);
   const passwordRules = passwordRuleItems(authPassword);
   const passwordStrength = getPasswordStrength(authPassword);
+  const hasDemoData = checkIns.some(isDemoCheckIn);
+  const showDeveloperControls = process.env.NODE_ENV !== "production" || process.env.NEXT_PUBLIC_ENABLE_DEVELOPER_CONTROLS === "true";
+  const notificationStatus = notificationSettings.permissionStatus === "unknown"
+    ? "Permission Needed"
+    : notificationSettings.permissionStatus === "denied"
+      ? "Off"
+      : notificationSettings.dailyReminderEnabled || notificationSettings.weeklyInsightEnabled || notificationSettings.sanctuaryUnlockEnabled
+        ? "On"
+        : "Off";
 
   useEffect(() => {
     setPreviewThemeKey(settings.theme);
@@ -233,6 +250,26 @@ export default function SettingsView() {
   function saveNotificationSettings() {
     updateSettings({ notificationSettings: notificationDraft });
     setNotificationsExpanded(false);
+  }
+
+  function exportMyData() {
+    const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), reflections: checkIns, weeklyReflections: useApp.getState().weeklyInsights, memory: coachNotes }, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `tranqly-export-${new Date().toISOString().slice(0, 10)}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function deleteAccount() {
+    if (!user || prompt("Type DELETE to permanently delete your Tranqly account.") !== "DELETE") return;
+    try {
+      await deleteUser(user);
+      deleteAllReflections();
+    } catch {
+      setAuthNotice("Please sign in again before deleting your account.");
+    }
   }
 
   useEffect(() => {
@@ -396,7 +433,7 @@ export default function SettingsView() {
         <h1 className="text-3xl font-bold tracking-tight">You</h1>
       </header>
 
-      <section className="rounded-xl2 border border-edge bg-card p-4 shadow-card">
+      <section className="order-1 rounded-xl2 border border-edge bg-card p-4 shadow-card">
         <h2 className="mb-3 text-sm font-semibold text-dim">Preferences</h2>
         <label className="block">
           <span className="mb-1.5 block text-sm font-medium">Your name</span>
@@ -431,7 +468,7 @@ export default function SettingsView() {
         </label>
       </section>
 
-      <section className="rounded-xl2 border border-edge bg-card p-4 shadow-card">
+      <section className="order-2 rounded-xl2 border border-edge bg-card p-4 shadow-card">
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 className="text-sm font-semibold text-dim">Account</h2>
@@ -567,7 +604,7 @@ export default function SettingsView() {
         {authNotice ? <p className="mt-2 text-sm font-semibold text-dim">{authNotice}</p> : null}
       </section>
 
-      <section className="rounded-xl2 border border-edge bg-card p-4 shadow-card">
+      <section className="order-4 rounded-xl2 border border-edge bg-card p-4 shadow-card">
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 className="text-sm font-semibold text-dim">Notifications</h2>
@@ -576,7 +613,7 @@ export default function SettingsView() {
             </p>
           </div>
           <span className="rounded-full border border-edge bg-ink px-3 py-1 text-[10px] font-black uppercase tracking-wide text-dim">
-            {notificationSettings.permissionStatus}
+            {notificationStatus}
           </span>
         </div>
         {!notificationsExpanded ? (
@@ -591,13 +628,9 @@ export default function SettingsView() {
                       : "Off"}
                   </p>
                 </div>
-                <div className="flex flex-wrap gap-2 text-xs font-semibold text-dim">
-                  <span className="rounded-full border border-edge px-2.5 py-1">
-                    Weekly insights {notificationSettings.weeklyInsightEnabled ? "On" : "Off"}
-                  </span>
-                  <span className="rounded-full border border-edge px-2.5 py-1">
-                    Sanctuary unlocks {notificationSettings.sanctuaryUnlockEnabled ? "On" : "Off"}
-                  </span>
+                <div className="grid gap-1 text-xs font-semibold text-dim">
+                  <div className="flex justify-between gap-4"><span>Weekly Reflection</span><span>{notificationSettings.weeklyInsightEnabled ? "On" : "Off"}</span></div>
+                  <div className="flex justify-between gap-4"><span>Sanctuary Unlocks</span><span>{notificationSettings.sanctuaryUnlockEnabled ? "On" : "Off"}</span></div>
                 </div>
               </div>
               <button
@@ -706,7 +739,7 @@ export default function SettingsView() {
         )}
       </section>
 
-      <section className="overflow-hidden rounded-[28px] border border-edge bg-card p-4 shadow-card">
+      <section className="order-3 overflow-hidden rounded-[28px] border border-edge bg-card p-4 shadow-card">
         <div className="mb-3 flex items-center justify-between gap-3">
           <div>
             <p className="text-[10px] font-black uppercase tracking-[0.22em] text-calm">Your Sanctuary</p>
@@ -748,7 +781,7 @@ export default function SettingsView() {
             onClick={() => setThemePickerOpen(true)}
             className="min-h-[48px] rounded-2xl border border-edge bg-ink px-4 text-sm font-black text-fg"
           >
-            Change Theme
+            Change Sanctuary
           </button>
           <button
             type="button"
@@ -763,15 +796,16 @@ export default function SettingsView() {
         </div>
       </section>
 
-      <section className="rounded-xl2 border border-edge bg-card p-4 shadow-card">
+      <section className="order-5 rounded-xl2 border border-edge bg-card p-4 shadow-card">
         <h2 className="mb-2 text-sm font-semibold text-dim">Privacy</h2>
         <p className="text-sm leading-relaxed text-faint">
-          Your reflections are private to your account. Tranqly uses your past
-          check-ins only to personalize your insights.
+          {user
+            ? "Your reflections are associated with your account and used only to provide Tranqly features."
+            : "Your reflections stay on this device unless you choose to sign in and sync them."}
         </p>
       </section>
 
-      <section className="rounded-xl2 border border-edge bg-card p-4 shadow-card">
+      <section className="order-8 rounded-xl2 border border-edge bg-card p-4 shadow-card">
         <div className="mb-3">
           <h2 className="text-2xl font-black tracking-tight">Support</h2>
           <p className="mt-1 text-sm leading-relaxed text-dim">
@@ -837,14 +871,42 @@ export default function SettingsView() {
         ) : null}
       </section>
 
-      <section className="rounded-xl2 border border-edge bg-card p-4 shadow-card">
+      <section className="order-8 rounded-xl2 border border-edge bg-card p-4 shadow-card">
         <h2 className="mb-2 text-sm font-semibold text-dim">Data controls</h2>
         <div className="flex flex-col gap-2">
+          {showDeveloperControls ? <>
+          <button
+            onClick={() => setPremium(!settings.premium)}
+            className={
+              settings.premium
+                ? "min-h-[44px] rounded-2xl border border-edge bg-ink px-4 text-sm font-semibold text-dim"
+                : "min-h-[44px] rounded-2xl border border-calm/25 bg-calm/10 px-4 text-sm font-semibold text-calm"
+            }
+          >
+            {settings.premium ? "Lock Tranqly Plus" : "Unlock Tranqly Plus"}
+          </button>
+          {hasDemoData ? (
+            <button
+              onClick={removeDemoData}
+              className="min-h-[44px] rounded-2xl border border-calm/25 bg-calm/10 px-4 text-sm font-semibold text-calm"
+            >
+              Remove demo data
+            </button>
+          ) : (
+            <button
+              onClick={addDemoData}
+              className="min-h-[44px] rounded-2xl bg-gradient-to-r from-calm to-sea px-4 text-sm font-black text-ink"
+            >
+              Add demo data
+            </button>
+          )}
+          </> : null}
+          <button onClick={exportMyData} className="min-h-[44px] rounded-2xl border border-edge bg-ink px-4 text-sm font-semibold text-dim">Export My Data</button>
           <button
             onClick={clearCoachNotes}
             className="min-h-[44px] rounded-2xl border border-edge bg-ink px-4 text-sm font-semibold text-dim"
           >
-            Reset memory profile
+            Reset Tranqly Memory
           </button>
           <button
             onClick={() =>
@@ -862,7 +924,7 @@ export default function SettingsView() {
           </button>
           <button
             onClick={() => {
-              if (confirm("Delete all reflections and reset Tranqly memory?")) {
+              if (prompt("Type DELETE to permanently remove all reflections and generated insights.") === "DELETE") {
                 deleteAllReflections();
               }
             }}
@@ -870,18 +932,18 @@ export default function SettingsView() {
           >
             Delete all reflections
           </button>
+          {user ? <button onClick={() => void deleteAccount()} className="mt-3 min-h-[44px] rounded-2xl border border-red-500/40 bg-red-500/10 px-4 text-sm font-semibold text-red-200">Delete Account</button> : null}
         </div>
       </section>
 
-      <section className="rounded-xl2 border border-edge bg-card p-4 shadow-card">
+      <section className="order-6 rounded-xl2 border border-edge bg-card p-4 shadow-card">
         <div className="mb-3 flex items-center justify-between gap-3">
           <div>
             <h2 className="text-sm font-semibold text-dim">
               What Tranqly remembers
             </h2>
             <p className="text-xs text-faint">
-              Short notes are saved from your conversations so replies can feel
-              more personal over time.
+              Tranqly may save short notes from your reflections so future responses can feel more personal.
             </p>
           </div>
           {coachNotes.length > 0 && (
@@ -895,24 +957,31 @@ export default function SettingsView() {
         </div>
         {coachNotes.length === 0 ? (
           <p className="text-sm text-faint">
-            Tranqly has not learned anything durable yet. The more you check
-            in, the more personal it gets.
+            Tranqly has not saved any lasting notes yet. The more you reflect, the more personal it can become.
           </p>
         ) : (
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-col gap-2">
             {coachNotes.map((note) => (
-              <span
+              <div
                 key={note}
-                className="rounded-full border border-edge bg-ink px-3 py-1.5 text-xs text-dim"
+                className="flex min-h-[44px] items-center justify-between gap-3 rounded-2xl border border-edge bg-ink px-3 py-2 text-xs text-dim"
               >
-                {note}
-              </span>
+                <span>{note}</span><button onClick={() => removeCoachNote(note)} className="shrink-0 text-xs font-bold text-calm">Delete</button>
+              </div>
             ))}
           </div>
         )}
+        <button onClick={() => coachNotes.length ? undefined : alert("Tranqly has not saved any lasting notes yet.")} className="mt-3 min-h-[44px] rounded-2xl border border-edge bg-ink px-4 text-sm font-bold text-calm">Manage Memory</button>
       </section>
 
-      <p className="pb-2 pt-1 text-center text-xs text-faint">
+      <section className="order-7 rounded-xl2 border border-calm/25 bg-gradient-to-br from-card to-[#171430] p-4 shadow-card">
+        <div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-black uppercase tracking-[0.18em] text-calm">Tranqly Plus</p><h2 className="mt-1 text-xl font-black">Your Year in Reflection</h2></div><span className="rounded-full border border-calm/25 bg-calm/10 px-3 py-1 text-[10px] font-black text-calm">Coming Soon</span></div>
+        <p className="mt-2 text-sm leading-relaxed text-dim">A private story of the reflection days, sanctuaries, themes, habits, and patterns that shaped your year.</p>
+        <div className="mt-3 grid grid-cols-2 gap-2"><div className="rounded-2xl border border-edge bg-ink/60 p-3"><p className="text-xl font-black text-calm">{totalReflectionDays}</p><p className="text-xs text-faint">Reflection days so far</p></div><div className="rounded-2xl border border-edge bg-ink/60 p-3"><p className="text-xl font-black text-calm">{SANCTUARY_PROGRESSION.filter((item) => totalReflectionDays >= item.requiredReflectionDays).length}</p><p className="text-xs text-faint">Sanctuaries discovered</p></div></div>
+        <p className="mt-3 text-xs text-faint">Private by default. Shared summaries will never include sensitive reflection details.</p>
+      </section>
+
+      <p className="order-9 pb-2 pt-1 text-center text-xs text-faint">
         Tranqly, your reflections live on your device
       </p>
 
@@ -937,7 +1006,7 @@ export default function SettingsView() {
                 <div>
                   <p className="text-[10px] font-black uppercase tracking-[0.22em] text-calm">Sanctuary</p>
                   <h2 className="mt-1 text-2xl font-black tracking-tight">Choose Sanctuary</h2>
-                  <p className="mt-1 text-sm text-dim">Themes unlock as you keep checking in.</p>
+                  <p className="mt-1 text-sm text-dim">Sanctuaries unlock as you keep reflecting.</p>
                 </div>
                 <button
                   onClick={() => setThemePickerOpen(false)}
@@ -955,17 +1024,23 @@ export default function SettingsView() {
                     THEMES_BY_UNLOCK.filter(
                       (theme) =>
                         theme.key !== settings.theme &&
-                        isThemeUnlocked(theme, checkIns.length, settings.premium)
+                        isThemeUnlocked(theme, totalReflectionDays, settings.premium)
                     ),
                   ],
                   [
-                    "Locked",
+                    "Growing",
                     THEMES_BY_UNLOCK.filter(
                       (theme) =>
                         theme.key !== settings.theme &&
-                        !isThemeUnlocked(theme, checkIns.length, settings.premium)
-                    ),
+                        theme.unlockType === "reflections" &&
+                        !isThemeUnlocked(theme, totalReflectionDays, settings.premium)
+                    ).slice(0, 2),
                   ],
+                  [
+                    "Locked",
+                    THEMES_BY_UNLOCK.filter((theme) => theme.unlockType === "reflections" && !isThemeUnlocked(theme, totalReflectionDays, settings.premium)).slice(2),
+                  ],
+                  ["Seasonal", THEMES_BY_UNLOCK.filter((theme) => theme.unlockType === "seasonal")],
                 ].map(([sectionTitle, sectionThemes]) =>
                   (sectionThemes as typeof THEMES).length ? (
                     <section key={sectionTitle as string} className="mb-5 last:mb-0">
@@ -976,7 +1051,7 @@ export default function SettingsView() {
                         {(sectionThemes as typeof THEMES).map((theme) => {
                           const meta = THEME_COPY[theme.key] ?? THEME_COPY.twilight;
                           const current = theme.key === settings.theme;
-                          const unlocked = current || isThemeUnlocked(theme, checkIns.length, settings.premium);
+                          const unlocked = current || isThemeUnlocked(theme, totalReflectionDays, settings.premium);
                           return (
                             <article
                               key={theme.key}
@@ -1130,7 +1205,7 @@ export default function SettingsView() {
                   type="button"
                   disabled={
                     settings.theme === previewTheme.key ||
-                    !isThemeUnlocked(previewTheme, checkIns.length, settings.premium)
+                    !isThemeUnlocked(previewTheme, totalReflectionDays, settings.premium)
                   }
                   onClick={() => {
                     updateSettings({ theme: previewTheme.key });
@@ -1141,7 +1216,7 @@ export default function SettingsView() {
                 >
                   {settings.theme === previewTheme.key
                     ? "Theme selected"
-                    : isThemeUnlocked(previewTheme, checkIns.length, settings.premium)
+                    : isThemeUnlocked(previewTheme, totalReflectionDays, settings.premium)
                       ? "Select Theme"
                       : themeUnlockLabel(previewTheme)}
                 </button>

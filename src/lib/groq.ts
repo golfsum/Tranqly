@@ -67,10 +67,12 @@ export function modelForFeature(
 }
 
 function fallbackModels(primary: string, feature: AiFeatureSource) {
+  const textFallback = process.env.GROQ_FALLBACK_MODEL ||
+    (primary === "openai/gpt-oss-20b" ? "llama-3.3-70b-versatile" : "openai/gpt-oss-20b");
   if (["weekly_summary", "monthly_summary", "long_term_pattern"].includes(feature)) {
-    return [primary, primary, process.env.GROQ_TEXT_MODEL || "openai/gpt-oss-20b"];
+    return [...new Set([primary, process.env.GROQ_TEXT_MODEL || "openai/gpt-oss-20b", textFallback])];
   }
-  return [primary, primary];
+  return [...new Set([primary, textFallback])];
 }
 
 function estimateCost(model: string, inputTokens: number, outputTokens: number) {

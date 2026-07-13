@@ -12,6 +12,8 @@ export interface CoachReply {
   message: string;
   nextStep: string;
   title?: string;
+  preview?: string;
+  nudgeLabel?: "A Gentle Next Step" | "Something to Try" | "A Question to Carry" | "Something to Notice" | "A Little Reassurance";
   pattern?: string;
   summary?: string;
   themes?: string[];
@@ -161,6 +163,9 @@ export interface DeepInsight {
   safety_flags?: string[];
   source: "ai" | "local";
   createdAt: string;
+  isDemo?: boolean;
+  weekStart?: string;
+  weekEnd?: string;
 }
 
 export function dateKeyOf(d: Date): string {

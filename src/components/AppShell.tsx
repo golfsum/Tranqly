@@ -34,7 +34,11 @@ export default function AppShell() {
     message: string;
     nextStep: string;
     pattern?: string;
+    patternEvidence: number;
+    stepLabel: string;
   } | null>(null);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [feedbackText, setFeedbackText] = useState("");
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -61,13 +65,27 @@ export default function AppShell() {
   const streak = currentStreak(checkIns);
   const theme = themeByKey(themeKey);
   const latestInsights = checkIns.filter((entry) => entry.reply).slice(0, 3);
-  const openReply = (entry: string, reply: NonNullable<(typeof checkIns)[number]["reply"]>) =>
+  const saveResponseFeedback = (helpful: boolean, reason?: string, detail?: string) => {
+    const key = "tranqly-response-feedback";
+    const existing = JSON.parse(localStorage.getItem(key) ?? "[]") as unknown[];
+    localStorage.setItem(key, JSON.stringify([{ helpful, reason, detail: detail?.trim() || undefined, createdAt: new Date().toISOString() }, ...existing].slice(0, 100)));
+  };
+  const openReply = (entry: string, reply: NonNullable<(typeof checkIns)[number]["reply"]>) => {
+    const tags = reply.tags ?? reply.themes ?? [];
+    const evidence = tags.length
+      ? checkIns.filter((item) => tags.some((tag) => item.text.toLowerCase().includes(tag.toLowerCase()))).length
+      : 1;
+    const stepLabels = ["One Gentle Step", "A Question to Carry", "Something to Notice", "No Action Needed Today"];
+    setFeedbackOpen(false);
     setCoachReplyModal({
       entry,
       message: reply.message,
       nextStep: reply.nextStep,
       pattern: reply.pattern,
+      patternEvidence: Math.max(1, evidence),
+      stepLabel: reply.nudgeLabel ?? stepLabels[entry.length % stepLabels.length],
     });
+  };
 
   const activePanel = (
     <AnimatePresence mode="wait">
@@ -282,7 +300,8 @@ export default function AppShell() {
           >
             <button
               onClick={() => setCoachReplyModal(null)}
-              className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-ink text-sm text-dim hover:text-fg"
+              aria-label="Close response"
+              className="absolute right-3 top-3 flex h-11 w-11 items-center justify-center rounded-full border border-edge bg-ink text-lg font-bold text-fg"
             >
               x
             </button>
@@ -290,7 +309,7 @@ export default function AppShell() {
               <ThemeUserAvatar themeKey={themeKey} size={36} />
               <div>
                 <p className="text-[11px] font-bold uppercase tracking-wide text-calm">
-                  {firstName || "You"}
+                  Your Reflection
                 </p>
                 <p className="text-sm italic text-dim">
                   &ldquo;{coachReplyModal.entry}&rdquo;
@@ -300,7 +319,7 @@ export default function AppShell() {
             <div className="mb-3 flex items-center gap-3">
               <CoachAvatar size={30} />
               <p className="text-[11px] font-bold uppercase tracking-wide text-calm">
-                Tranqly
+                What Stood Out
               </p>
             </div>
             <p className="text-base leading-relaxed text-fg">
@@ -308,14 +327,14 @@ export default function AppShell() {
             </p>
             <div className="mt-4 rounded-xl border border-sea/25 bg-sea/10 px-4 py-3">
               <p className="text-[11px] font-bold uppercase tracking-wide text-sea">
-                One gentle step
+                {coachReplyModal.stepLabel}
               </p>
               <p className="mt-0.5 text-sm">{coachReplyModal.nextStep}</p>
             </div>
             {coachReplyModal.pattern && (
               <div className="mt-3 rounded-xl border border-edge bg-ink px-4 py-3">
                 <p className="text-[11px] font-bold uppercase tracking-wide text-calm">
-                  Pattern to watch
+                  {coachReplyModal.patternEvidence >= 3 ? "Pattern to Watch" : coachReplyModal.patternEvidence === 2 ? "A Pattern May Be Emerging" : "Something to Notice"}
                 </p>
                 <p className="mt-0.5 text-sm text-dim">{coachReplyModal.pattern}</p>
               </div>
@@ -323,14 +342,15 @@ export default function AppShell() {
             <div className="mt-4 flex items-center justify-between border-t border-edge pt-4">
               <p className="text-sm font-semibold text-faint">Was this helpful?</p>
               <div className="flex gap-2">
-                <button className="rounded-full border border-edge px-3 py-1.5 text-xs font-bold text-dim">
-                  Thumbs up
+                <button onClick={() => { saveResponseFeedback(true); setFeedbackOpen(false); }} className="rounded-full border border-edge px-3 py-1.5 text-xs font-bold text-dim">
+                  Helpful
                 </button>
-                <button className="rounded-full border border-edge px-3 py-1.5 text-xs font-bold text-dim">
-                  Thumbs down
+                <button onClick={() => setFeedbackOpen(true)} className="rounded-full border border-edge px-3 py-1.5 text-xs font-bold text-dim">
+                  Not Helpful
                 </button>
               </div>
             </div>
+            {feedbackOpen ? <div className="mt-3 rounded-2xl border border-edge bg-ink/65 p-3"><p className="text-sm font-bold">What felt off?</p><div className="mt-2 flex flex-wrap gap-2">{["Too obvious", "Too much advice", "Incorrect pattern", "Too personal", "Did not understand me"].map((reason) => <button key={reason} onClick={() => { saveResponseFeedback(false, reason, feedbackText); setFeedbackOpen(false); setFeedbackText(""); }} className="min-h-[36px] rounded-full border border-edge px-3 text-xs font-bold text-dim">{reason}</button>)}</div><textarea value={feedbackText} onChange={(event) => setFeedbackText(event.target.value)} placeholder="Tell us more (optional)" rows={2} className="mt-3 w-full resize-none rounded-xl border border-edge bg-card p-3 text-sm text-fg placeholder-faint" /></div> : null}
           </div>
         </div>
       )}

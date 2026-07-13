@@ -1,10 +1,10 @@
-import AppShell from "@/components/AppShell";
 import SiteAnalyticsTracker from "@/components/SiteAnalyticsTracker";
 import ComingSoonLanding from "./coming-soon/ComingSoonLanding";
 
-const SHOW_COMING_SOON =
-  process.env.NEXT_PUBLIC_TRANQLY_COMING_SOON === "true" ||
-  process.env.TRANQLY_COMING_SOON === "true";
+const COMING_SOON_FLAG =
+  process.env.NEXT_PUBLIC_TRANQLY_COMING_SOON ??
+  process.env.TRANQLY_COMING_SOON;
+const SHOW_COMING_SOON = COMING_SOON_FLAG === "true";
 
 export default function Page() {
   if (SHOW_COMING_SOON) {
@@ -18,8 +18,8 @@ export default function Page() {
 
   return (
     <>
-      <SiteAnalyticsTracker page="app" />
-      <AppShell />
+      <SiteAnalyticsTracker page="home" />
+      <ComingSoonLanding launchMode />
     </>
   );
 }

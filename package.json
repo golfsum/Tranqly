@@ -10,7 +10,13 @@
     "mobile:start": "npm --prefix apps/mobile run start",
     "mobile:typecheck": "npm --prefix apps/mobile run typecheck",
     "mobile:build:ios": "npm --prefix apps/mobile run build:ios",
-    "mobile:submit:ios": "npm --prefix apps/mobile run submit:ios"
+    "mobile:submit:ios": "npm --prefix apps/mobile run submit:ios",
+    "test:visual:landing": "playwright test",
+    "test:visual:app": "playwright test --config playwright.mobile.config.ts",
+    "test:visual:app:update": "playwright test --config playwright.mobile.config.ts --update-snapshots",
+    "test:landing": "playwright test",
+    "test:app": "playwright test --config playwright.mobile.config.ts",
+    "test:all": "npm run test:landing && npm run test:app"
   },
   "dependencies": {
     "firebase": "^11.1.0",
@@ -22,6 +28,7 @@
     "zustand": "^4.5.5"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",

@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { themeByKey, themeUnlockLabel, themeUnlockRequirement, themesByUnlockOrder } from "@/lib/themes";
 import { useApp } from "@/lib/store";
 import type { CheckIn } from "@/lib/types";
+import { SANCTUARY_PROGRESSION, sanctuaryProgress } from "@/lib/sanctuaryProgress";
 
 type ThemeScores = {
   calm: number;
@@ -122,8 +123,8 @@ export function SanctuaryCard({
 }) {
   const themeKey = useApp((s) => s.settings.theme);
   const theme = themeByKey(themeKey);
-  const nextTheme = nextThemeUnlock(checkIns.length);
-  const needed = nextTheme ? themeUnlockRequirement(nextTheme) - checkIns.length : 0;
+  const progress = sanctuaryProgress(checkIns);
+  const nextTheme = progress.next;
 
   return (
     <section className="overflow-hidden rounded-xl2 border border-sea/25 bg-gradient-to-br from-[#111827] via-card to-[#07131a] p-4 shadow-card">
@@ -132,7 +133,9 @@ export function SanctuaryCard({
           <h2 className="mt-1 text-2xl font-bold tracking-tight">{theme.label}</h2>
           <p className="text-sm text-dim">Your Sanctuary</p>
           <p className="text-xs font-semibold text-faint">
-            You&apos;ve spent {checkIns.length} quit moment{checkIns.length === 1 ? "" : "s"} here.
+            {progress.totalReflectionDays === 0
+              ? "Your first reflection begins here."
+              : `You've reflected here for ${progress.totalReflectionDays} days.`}
           </p>
         </div>
         <button
@@ -157,23 +160,23 @@ export function SanctuaryCard({
       </div>
       <div className="mt-3 grid gap-3 rounded-2xl border border-edge bg-ink/60 p-3 sm:grid-cols-3">
         <div>
-          <p className="text-xs font-bold text-faint">Your Sanctuary</p>
-          <p className="mt-1 text-lg font-black text-sea">{theme.label}</p>
-          <p className="text-xs text-dim">Selected</p>
+          <p className="text-xs font-bold text-faint">Reflection days</p>
+          <p className="mt-1 text-2xl font-black text-sea">{progress.totalReflectionDays}</p>
+          <p className="text-xs text-dim">Progress never resets</p>
         </div>
         <div>
-          <p className="text-xs font-bold text-faint">Streak</p>
+          <p className="text-xs font-bold text-faint">Current streak</p>
           <p className="mt-1 text-2xl font-black text-sea">{currentStreak}</p>
           <p className="text-xs text-dim">day{currentStreak === 1 ? "" : "s"}</p>
         </div>
         <div>
           <p className="text-xs font-bold text-faint">Next Sanctuary</p>
           <p className="mt-1 text-lg font-black text-fg">
-            {nextTheme?.label ?? "All sanctuaries"}
+            {nextTheme?.name ?? "Collection complete"}
           </p>
           <p className="text-xs text-sea">
             {nextTheme
-              ? `Unlocks in ${needed} reflection${needed === 1 ? "" : "s"}`
+              ? `Unlocks in ${progress.remaining} reflection day${progress.remaining === 1 ? "" : "s"}`
               : "Sanctuary collection complete"}
           </p>
         </div>
@@ -195,6 +198,7 @@ export function SanctuaryModal({
 }) {
   const themeKey = useApp((s) => s.settings.theme);
   const theme = themeByKey(themeKey);
+  const progress = sanctuaryProgress(checkIns);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end bg-black/70 p-3 backdrop-blur-sm sm:items-center sm:justify-center">
@@ -211,11 +215,9 @@ export function SanctuaryModal({
             <h2 className="mt-1 text-3xl font-bold tracking-tight">{theme.label}</h2>
             <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-bold text-faint">
               <span className="rounded-full border border-edge bg-ink px-2.5 py-1">Current Sanctuary</span>
+              {themeKey !== theme.key ? <span className="rounded-full border border-edge bg-ink px-2.5 py-1">{themeUnlockLabel(theme)}</span> : null}
               <span className="rounded-full border border-edge bg-ink px-2.5 py-1">
-                {themeUnlockLabel(theme)}
-              </span>
-              <span className="rounded-full border border-edge bg-ink px-2.5 py-1">
-                {checkIns.length} quit moment{checkIns.length === 1 ? "" : "s"} here
+                {progress.totalReflectionDays} Reflection Day{progress.totalReflectionDays === 1 ? "" : "s"}
               </span>
             </div>
             <p className="text-sm leading-relaxed text-dim">
@@ -249,11 +251,65 @@ export function SanctuaryModal({
         </div>
 
         <div className="mt-4 grid grid-cols-3 gap-2">
-          <StatPill label="Quit moments" value={String(checkIns.length)} />
+          <StatPill label="Reflection days" value={String(progress.totalReflectionDays)} />
           <StatPill label="Streak" value={`${currentStreak}d`} />
           <StatPill label="Best" value={`${bestStreak}d`} />
         </div>
 
+      </motion.div>
+    </div>
+  );
+}
+
+export function SanctuaryCollection({ checkIns, onOpen }: { checkIns: CheckIn[]; onOpen: () => void }) {
+  const progress = sanctuaryProgress(checkIns);
+  const discovered = progress.unlockedSanctuaryIds.length;
+
+  return (
+    <section className="rounded-xl2 border border-calm/20 bg-card p-4 shadow-card">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-[0.18em] text-calm">Your Sanctuaries</p>
+          <h2 className="mt-1 text-xl font-black">{discovered} of {SANCTUARY_PROGRESSION.length} discovered</h2>
+          <p className="mt-1 text-xs leading-relaxed text-dim">Every 7 reflection days reveals a new sanctuary. Missing a day never removes your progress.</p>
+        </div>
+        <button onClick={onOpen} className="shrink-0 rounded-full border border-calm/25 bg-calm/10 px-3 py-2 text-xs font-black text-calm">View all</button>
+      </div>
+      {progress.next ? (
+        <div className="mt-4 rounded-2xl border border-calm/25 bg-ink/65 p-3">
+          <p className="text-[10px] font-black uppercase tracking-[0.16em] text-calm">Next sanctuary</p>
+          <div className="mt-2 flex items-center gap-3">
+            <img src={themeByKey(progress.next.key).artwork} alt="" className="h-14 w-14 shrink-0 rounded-xl object-cover" />
+            <div className="min-w-0 flex-1">
+              <p className="font-black text-fg">{progress.next.name}</p>
+              <p className="text-xs text-dim">{progress.remaining} more reflection day{progress.remaining === 1 ? "" : "s"} to unlock</p>
+            </div>
+            <p className="shrink-0 text-xs font-bold text-sea">{progress.totalReflectionDays} / {progress.next.requiredReflectionDays}</p>
+          </div>
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-black/35"><div className="h-full rounded-full bg-calm" style={{ width: `${Math.min(100, (progress.totalReflectionDays / progress.next.requiredReflectionDays) * 100)}%` }} /></div>
+        </div>
+      ) : <p className="mt-4 rounded-2xl border border-sea/20 bg-sea/10 p-3 text-sm font-bold text-sea">Your sanctuary collection is complete.</p>}
+    </section>
+  );
+}
+
+export function SanctuaryCollectionModal({ checkIns, currentTheme, onExplore, onClose }: { checkIns: CheckIn[]; currentTheme: string; onExplore: (key: string) => void; onClose: () => void }) {
+  const progress = sanctuaryProgress(checkIns);
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-black/70 p-3 backdrop-blur-sm sm:items-center sm:justify-center">
+      <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-[2rem] border border-edge bg-card p-5 shadow-card">
+        <div className="flex items-start justify-between gap-4"><div><p className="text-[11px] font-black uppercase tracking-[0.18em] text-calm">Sanctuary Collection</p><h2 className="mt-1 text-3xl font-black">Your Sanctuaries</h2><p className="mt-1 text-sm text-dim">Every 7 reflection days reveals a new place.</p></div><button onClick={onClose} className="rounded-full border border-edge bg-ink px-3 py-1.5 text-sm font-bold text-dim">Close</button></div>
+        <div className="mt-5 space-y-3">
+          {SANCTUARY_PROGRESSION.map((item) => {
+            const theme = themeByKey(item.key);
+            const unlocked = progress.totalReflectionDays >= item.requiredReflectionDays;
+            const current = currentTheme === item.key;
+            const growing = !unlocked && progress.next?.key === item.key;
+            return <article key={item.key} className={`overflow-hidden rounded-2xl border ${growing ? "border-calm/55" : "border-edge"} bg-ink/65`}>
+              <div className="flex gap-3 p-3"><div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-xl"><img src={theme.artwork} alt="" className={`h-full w-full object-cover ${unlocked ? "" : "opacity-45"}`} /></div><div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-2"><h3 className="font-black text-fg">{item.name}</h3><span className="rounded-full border border-edge px-2 py-0.5 text-[9px] font-black uppercase text-calm">{current ? "Current" : unlocked ? "Discovered" : growing ? "Growing" : "Locked"}</span></div><p className="mt-1 line-clamp-2 text-xs leading-relaxed text-dim">{theme.description}</p><p className="mt-2 text-[11px] font-bold text-sea">{unlocked ? `Discovered at ${item.requiredReflectionDays} reflection days` : growing ? `${progress.totalReflectionDays} / ${item.requiredReflectionDays} reflection days` : `Unlocks at ${item.requiredReflectionDays} reflection days`}</p>{unlocked ? <button onClick={() => onExplore(item.key)} className="mt-2 text-xs font-black text-calm">Explore</button> : null}</div></div>
+            </article>;
+          })}
+        </div>
       </motion.div>
     </div>
   );
