@@ -18,7 +18,7 @@ const topFeatures = [
   { title: "Understand yourself over time", body: "Notice patterns you would not see on your own.", icon: "brain" as const },
   { title: "Grow one reflection at a time", body: "Just 60 seconds each day creates real change.", icon: "sprout" as const },
   { title: "Unlock peaceful sanctuaries", body: "Every reflection grows your world.", icon: "lotus" as const },
-  { title: "Private by design", body: "Your reflections stay private and are used only to provide Tranqly features.", icon: "lock" as const },
+  { title: "Private by design", body: "Your reflections stay private and secure on your device.", icon: "lock" as const },
 ] as const;
 
 const workflow = [
@@ -475,7 +475,7 @@ export default function ComingSoonLanding({ launchMode = false }: { launchMode?:
                   { title: "AI that remembers", body: "Personalized insights from your journey.", icon: "brain" as const },
                   { title: "Patterns that guide", body: "Spot what is helping you grow and what is not.", icon: "growth" as const },
                   { title: "Daily reflection", body: "Short check-ins that create real change.", icon: "lotus" as const },
-                  { title: "Your privacy", body: "Your reflections stay private and secure.", icon: "lock" as const },
+                  { title: "Your privacy", body: "Your reflections stay private and secure on your device.", icon: "lock" as const },
                 ].map((item) => (
                   <div key={item.title} className="flex items-start gap-4">
                     <div className="grid h-16 w-16 shrink-0 place-items-center rounded-full border border-[#63428d] bg-[#161121]/88 text-[#cf9cff]">
