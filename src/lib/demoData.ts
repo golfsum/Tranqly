@@ -1,6 +1,8 @@
 import { CheckIn, CoachReply, DeepInsight, Mood, dateKeyOf } from "./types";
+import type { ComplimentaryAccess } from "./access";
 
 export const DEMO_ID_PREFIX = "tranqly-demo-";
+export const FIRST_WEEK_DEMO_ID_PREFIX = "tranqly-first-week-demo-";
 export const DEMO_NOTE_PREFIX = "[demo] ";
 
 type DemoEntrySeed = {
@@ -231,8 +233,8 @@ const DEMO_ENTRIES: DemoEntrySeed[] = [
   },
 ];
 
-function dateForDemo(daysAgo: number, time: string) {
-  const date = new Date();
+function dateForDemo(daysAgo: number, time: string, base = new Date()) {
+  const date = new Date(base);
   date.setDate(date.getDate() - daysAgo);
   const [hours, minutes] = time.split(":").map(Number);
   date.setHours(hours, minutes, 0, 0);
@@ -273,6 +275,84 @@ export function buildDemoCheckIns(): CheckIn[] {
       reply: demoReply(seed, createdAt),
     };
   }).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export function buildFirstWeekTrialDemo(now = new Date()): {
+  checkIns: CheckIn[];
+  deepInsight: DeepInsight;
+  moods: Record<string, Mood>;
+  complimentaryAccess: ComplimentaryAccess;
+} {
+  const weekSeeds = DEMO_ENTRIES.slice(0, 7);
+  const periodStart = new Date(now);
+  periodStart.setDate(periodStart.getDate() - 7);
+  periodStart.setHours(0, 0, 0, 0);
+  const periodEnd = new Date(now);
+  periodEnd.setDate(periodEnd.getDate() - 1);
+  periodEnd.setHours(23, 59, 59, 999);
+  const checkIns = weekSeeds.map((seed, index) => {
+    const date = dateForDemo(7 - index, seed.time, now);
+    const createdAt = date.toISOString();
+    return {
+      id: `${FIRST_WEEK_DEMO_ID_PREFIX}${index}`,
+      text: seed.text,
+      createdAt,
+      dateKey: dateKeyOf(date),
+      source: seed.source,
+      prompt: seed.prompt,
+      promptType: "first_week_demo",
+      promptWhy: "Tranqly chose this from the themes in your first week.",
+      reply: demoReply(seed, createdAt),
+    };
+  }).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const moods: Record<string, Mood> = {};
+  for (const entry of checkIns) {
+    const seed = weekSeeds.find((item) => item.text === entry.text);
+    if (seed) moods[entry.dateKey] = seed.mood;
+  }
+  const weekStart = checkIns[checkIns.length - 1]?.dateKey;
+  const weekEnd = checkIns[0]?.dateKey;
+  const createdAt = now.toISOString();
+  return {
+    checkIns,
+    moods,
+    deepInsight: {
+      ...buildDemoDeepInsight(),
+      headline: "Your first week showed what helps you steady yourself",
+      insight:
+        "Across your reflections this week, a clear thread appeared: rest, small pauses, and easy connection seemed to make the week feel more manageable. You began noticing which moments helped you feel steadier and more like yourself.",
+      pattern:
+        "Your calmer reflections followed days with sleep, a short walk, or a simpler plan.",
+      suggestion:
+        "Protect one small reset during the coming week. A short walk, a smaller list, or a quieter evening may be enough.",
+      affirmation:
+        "You showed up for seven quiet moments, and that gave Tranqly something real to learn from.",
+      gentleFocusTitle: "Next gentle focus",
+      evidenceLevel: "strong",
+      completionMessage: "You made space to reflect every day this week.",
+      reflectionDays: 7,
+      reflectionCount: 7,
+      rewardUnlocked: true,
+      rewardId: "forest-haven",
+      recurring_themes: ["sleep", "work pressure", "outside time", "connection"],
+      mood_trend: "The week became steadier when rest and pauses appeared.",
+      next_focus: "Keep one small reset close, especially before busy days.",
+      source: "local",
+      createdAt,
+      isDemo: true,
+      weekStart,
+      weekEnd,
+    },
+    complimentaryAccess: {
+      startedAt: periodStart.toISOString(),
+      endsAt: periodEnd.toISOString(),
+      status: "completed",
+      source: "first_week",
+      weeklyReflectionDeliveredAt: createdAt,
+      conversionPromptShownAt: null,
+      isDemo: true,
+    },
+  };
 }
 
 export function buildDemoMoods(): Record<string, Mood> {
@@ -316,7 +396,7 @@ export function buildDemoDeepInsight(): DeepInsight {
 }
 
 export function isDemoCheckIn(entry: CheckIn) {
-  return entry.id.startsWith(DEMO_ID_PREFIX);
+  return entry.id.startsWith(DEMO_ID_PREFIX) || entry.id.startsWith(FIRST_WEEK_DEMO_ID_PREFIX);
 }
 
 export function isDemoNote(note: string) {

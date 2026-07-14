@@ -82,14 +82,28 @@ export function localDeepInsight(
 ): DeepInsight {
   const pick = <T,>(arr: T[]) => arr[Math.floor(Math.random() * arr.length)];
 
+  const reflectionDays = new Set(entries.map((entry) => entry.dateKey)).size;
   let insight: string;
-  if (streak >= 7) {
-    insight = `You've reflected ${streak} days in a row. That kind of consistency is rare, and it's exactly how self-awareness compounds. Your entries show someone who keeps showing up no matter how the day went.`;
-  } else if (entries.length > 3) {
-    insight = `Across your ${entries.length} recent check-ins there's a clear thread: you keep coming back. The days differ, the effort doesn't. That's the foundation everything else gets built on.`;
+  let evidenceLevel: DeepInsight["evidenceLevel"] = "limited";
+  let completionMessage = "One honest moment can still give you something meaningful to return to.";
+  if (reflectionDays >= 7) {
+    evidenceLevel = "strong";
+    completionMessage = "You made space to reflect every day this week.";
+    insight = "Across your week, a clear thread appeared around showing up and noticing what mattered. The days may have looked different, but you kept giving yourself a place to name what was happening. That kind of attention can make patterns easier to see over time.";
+  } else if (reflectionDays >= 4) {
+    evidenceLevel = "meaningful";
+    completionMessage = `You checked in on ${reflectionDays} days this week, and those moments gave Tranqly something meaningful to reflect on.`;
+    insight = `Across several reflections, a recurring theme seemed to be your willingness to pause instead of letting the week blur together. What you shared points toward a useful starting place: the more specific your check-ins are, the easier it becomes to notice what helps.`;
+  } else if (reflectionDays >= 2) {
+    evidenceLevel = "emerging";
+    completionMessage = `${reflectionDays} honest check-ins were enough to reveal a meaningful starting point.`;
+    insight = "A small thread appeared in what you shared this week. There may not be a full pattern yet, but the fact that you returned more than once gives Tranqly a better glimpse into what stayed with you.";
+  } else if (reflectionDays === 1) {
+    insight = "One moment stood out from your week. It may not show a full pattern yet, but it gives a clear glimpse into what was asking for your attention. That is still worth keeping.";
   } else {
     insight =
-      "You're at the very beginning, which is honestly the best place to notice things. The first few reflections teach you more about your patterns than months of autopilot.";
+      "You did not share a reflection this week, so there is not a personal pattern to bring together yet. Your space is still here whenever you feel ready to return.";
+    completionMessage = "There is no perfect way to reflect. You can return whenever it feels useful.";
   }
 
   return {
@@ -100,9 +114,9 @@ export function localDeepInsight(
     ]),
     insight,
     suggestion: pick([
-      "Try checking in at the same time each evening. Anchoring it to an existing habit makes it effortless.",
-      "This week, add one line about how you felt, not just what you did. Feelings are where the patterns hide.",
-      "Re-read last week's entries once. Seeing your own progress in your own words is powerful fuel.",
+      "Choose one small pause you can protect this week, even if it is only a few quiet minutes.",
+      "This week, add one line about how it felt, not just what happened.",
+      "Notice one moment this week where you feel a little more settled, supported, or clear.",
     ]),
     affirmation: pick([
       "You're allowed to grow at your own pace.",
@@ -111,5 +125,12 @@ export function localDeepInsight(
     ]),
     source: "local",
     createdAt: new Date().toISOString(),
+    gentleFocusTitle: "Next gentle focus",
+    evidenceLevel,
+    completionMessage,
+    reflectionDays,
+    reflectionCount: entries.length,
+    rewardUnlocked: reflectionDays >= 7,
+    rewardId: reflectionDays >= 7 ? "forest-haven" : "none",
   };
 }

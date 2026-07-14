@@ -78,6 +78,7 @@ export default function CoachChat({
   const attachReply = useApp((s) => s.attachReply);
   const name = useApp((s) => s.settings.name);
   const premium = useApp((s) => s.settings.premium);
+  const complimentaryAccess = useApp((s) => s.settings.complimentaryAccess);
   const sanctuaryTheme = useApp((s) => s.settings.theme);
   const moods = useApp((s) => s.moods);
   const coachNotes = useApp((s) => s.coachNotes);
@@ -170,6 +171,17 @@ export default function CoachChat({
     tap();
     setComposerError("");
 
+    const needsWeekTwo =
+      !premium &&
+      complimentaryAccess &&
+      (complimentaryAccess.status === "completed" || complimentaryAccess.status === "expired");
+    if (needsWeekTwo) {
+      setGrowthNotice("Your first week is complete. Ready for another one?");
+      window.setTimeout(() => setGrowthNotice(""), 6500);
+      onNeedPremium();
+      return;
+    }
+
     const allowed = canUseCoach();
     const notice = growthNoticeFor(checkIns.length, checkIns.length + 1);
     const checkIn = addCheckIn(entry, {
@@ -189,7 +201,7 @@ export default function CoachChat({
 
     if (!allowed) {
       setGrowthNotice(
-        "Your reflection has been saved. You've reached your free insight limit for today. Upgrade to Tranqly Plus for unlimited insights."
+        "Your reflection has been saved. Begin Week Two when you are ready for more Tranqly insights."
       );
       window.setTimeout(() => setGrowthNotice(""), 6500);
       onNeedPremium();
@@ -345,6 +357,16 @@ export default function CoachChat({
 
   const toggleVoice = async () => {
     tap();
+    const needsWeekTwo =
+      !premium &&
+      complimentaryAccess &&
+      (complimentaryAccess.status === "completed" || complimentaryAccess.status === "expired");
+    if (needsWeekTwo) {
+      setGrowthNotice("Your first week is complete. Ready for another one?");
+      window.setTimeout(() => setGrowthNotice(""), 6500);
+      onNeedPremium();
+      return;
+    }
     if (!voiceSupported) {
       textareaRef.current?.focus();
       return;
@@ -557,6 +579,7 @@ export default function CoachChat({
             <div className="mb-1.5 flex flex-col items-center gap-1">
               <div className="relative flex items-center justify-center">
                 <motion.button
+                  data-onboarding-target="mic"
                   whileTap={{ scale: 0.92 }}
                   animate={
                     recording

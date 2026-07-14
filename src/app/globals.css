@@ -68,6 +68,29 @@ select {
   scrollbar-width: none;
 }
 
+.desktop-panel-scroll {
+  scrollbar-color: rgb(var(--calm-rgb) / 0.7) rgb(var(--ink-rgb) / 0.45);
+  scrollbar-width: thin;
+}
+
+.desktop-panel-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.desktop-panel-scroll::-webkit-scrollbar-track {
+  border-radius: 999px;
+  background: rgb(var(--ink-rgb) / 0.45);
+}
+
+.desktop-panel-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgb(var(--calm-rgb) / 0.7);
+}
+
+.desktop-panel-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--calm-rgb) / 0.9);
+}
+
 @keyframes breathe {
   0%,
   100% {

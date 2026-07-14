@@ -20,6 +20,7 @@ import { isDemoCheckIn } from "@/lib/demoData";
 import { useApp } from "@/lib/store";
 import { THEMES, isThemeUnlocked, themeByKey, themeUnlockLabel, themesByUnlockOrder } from "@/lib/themes";
 import { reflectionDayCount, SANCTUARY_PROGRESSION } from "@/lib/sanctuaryProgress";
+import { formatAccessEndDate, hasTranqlyAccess } from "@/lib/access";
 
 type ThemeIconName =
   | "lotus"
@@ -193,6 +194,7 @@ export default function SettingsView() {
   const removeCoachNote = useApp((s) => s.removeCoachNote);
   const deleteAllReflections = useApp((s) => s.deleteAllReflections);
   const addDemoData = useApp((s) => s.addDemoData);
+  const addFirstWeekTrialDemo = useApp((s) => s.addFirstWeekTrialDemo);
   const removeDemoData = useApp((s) => s.removeDemoData);
   const setPremium = useApp((s) => s.setPremium);
   const checkIns = useApp((s) => s.checkIns);
@@ -201,6 +203,7 @@ export default function SettingsView() {
   const [themePickerOpen, setThemePickerOpen] = useState(false);
   const activeTheme = themeByKey(settings.theme);
   const notificationSettings = settings.notificationSettings ?? DEFAULT_NOTIFICATION_SETTINGS;
+  const effectivePremium = hasTranqlyAccess(settings.premium, settings.complimentaryAccess);
   const previewTheme = themeByKey(previewThemeKey);
   const activeCopy = THEME_COPY[activeTheme.key] ?? THEME_COPY.twilight;
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -222,6 +225,7 @@ export default function SettingsView() {
   const passwordRules = passwordRuleItems(authPassword);
   const passwordStrength = getPasswordStrength(authPassword);
   const hasDemoData = checkIns.some(isDemoCheckIn);
+  const hasFirstWeekTrialDemo = settings.complimentaryAccess?.isDemo === true;
   const showDeveloperControls = process.env.NODE_ENV !== "production" || process.env.NEXT_PUBLIC_ENABLE_DEVELOPER_CONTROLS === "true";
   const notificationStatus = notificationSettings.permissionStatus === "unknown"
     ? "Permission Needed"
@@ -885,6 +889,16 @@ export default function SettingsView() {
           >
             {settings.premium ? "Lock Tranqly Plus" : "Unlock Tranqly Plus"}
           </button>
+          {settings.complimentaryAccess?.status === "active" ? (
+            <p className="basis-full text-xs font-semibold text-faint">
+              First week active until {formatAccessEndDate(settings.complimentaryAccess)}.
+            </p>
+          ) : null}
+          {hasFirstWeekTrialDemo ? (
+            <p className="basis-full text-xs font-semibold text-calm">
+              Day 7 trial demo is active. The first-week completion flow should appear.
+            </p>
+          ) : null}
           {hasDemoData ? (
             <button
               onClick={removeDemoData}
@@ -900,6 +914,12 @@ export default function SettingsView() {
               Add demo data
             </button>
           )}
+          <button
+            onClick={hasFirstWeekTrialDemo ? removeDemoData : addFirstWeekTrialDemo}
+            className="min-h-[44px] rounded-2xl border border-edge bg-ink px-4 text-sm font-semibold text-dim"
+          >
+            {hasFirstWeekTrialDemo ? "Remove Day 7 trial demo" : "Simulate Day 7 trial ending"}
+          </button>
           </> : null}
           <button onClick={exportMyData} className="min-h-[44px] rounded-2xl border border-edge bg-ink px-4 text-sm font-semibold text-dim">Export My Data</button>
           <button
@@ -911,16 +931,23 @@ export default function SettingsView() {
           <button
             onClick={() =>
               updateSettings({
-                onboarded: true,
+                onboarded: false,
                 onboardingCoachCompleted: false,
-                onboardingCoachStep: "mic",
+                onboardingCoachStep: null,
                 onboardingSkippedAt: null,
                 onboardingCompletedAt: null,
+                reflectionCoachMarkSeen: false,
+                journeyCoachMarkSeen: false,
+                sanctuaryCoachMarkSeen: false,
+                onboardingStatus: "not_started",
+                currentOnboardingStep: "firstWeek",
+                onboardingVersion: 2,
+                complimentaryAccess: null,
               })
             }
             className="min-h-[44px] rounded-2xl border border-edge bg-ink px-4 text-sm font-semibold text-dim"
           >
-            Replay onboarding walkthrough
+            Restart onboarding
           </button>
           <button
             onClick={() => {
@@ -1024,7 +1051,7 @@ export default function SettingsView() {
                     THEMES_BY_UNLOCK.filter(
                       (theme) =>
                         theme.key !== settings.theme &&
-                        isThemeUnlocked(theme, totalReflectionDays, settings.premium)
+                        isThemeUnlocked(theme, totalReflectionDays, effectivePremium)
                     ),
                   ],
                   [
@@ -1033,12 +1060,12 @@ export default function SettingsView() {
                       (theme) =>
                         theme.key !== settings.theme &&
                         theme.unlockType === "reflections" &&
-                        !isThemeUnlocked(theme, totalReflectionDays, settings.premium)
+                        !isThemeUnlocked(theme, totalReflectionDays, effectivePremium)
                     ).slice(0, 2),
                   ],
                   [
                     "Locked",
-                    THEMES_BY_UNLOCK.filter((theme) => theme.unlockType === "reflections" && !isThemeUnlocked(theme, totalReflectionDays, settings.premium)).slice(2),
+                    THEMES_BY_UNLOCK.filter((theme) => theme.unlockType === "reflections" && !isThemeUnlocked(theme, totalReflectionDays, effectivePremium)).slice(2),
                   ],
                   ["Seasonal", THEMES_BY_UNLOCK.filter((theme) => theme.unlockType === "seasonal")],
                 ].map(([sectionTitle, sectionThemes]) =>
@@ -1051,7 +1078,7 @@ export default function SettingsView() {
                         {(sectionThemes as typeof THEMES).map((theme) => {
                           const meta = THEME_COPY[theme.key] ?? THEME_COPY.twilight;
                           const current = theme.key === settings.theme;
-                          const unlocked = current || isThemeUnlocked(theme, totalReflectionDays, settings.premium);
+                          const unlocked = current || isThemeUnlocked(theme, totalReflectionDays, effectivePremium);
                           return (
                             <article
                               key={theme.key}
@@ -1205,7 +1232,7 @@ export default function SettingsView() {
                   type="button"
                   disabled={
                     settings.theme === previewTheme.key ||
-                    !isThemeUnlocked(previewTheme, totalReflectionDays, settings.premium)
+                    !isThemeUnlocked(previewTheme, totalReflectionDays, effectivePremium)
                   }
                   onClick={() => {
                     updateSettings({ theme: previewTheme.key });
@@ -1216,7 +1243,7 @@ export default function SettingsView() {
                 >
                   {settings.theme === previewTheme.key
                     ? "Theme selected"
-                    : isThemeUnlocked(previewTheme, totalReflectionDays, settings.premium)
+                    : isThemeUnlocked(previewTheme, totalReflectionDays, effectivePremium)
                       ? "Select Theme"
                       : themeUnlockLabel(previewTheme)}
                 </button>

@@ -30,6 +30,7 @@ import {
 } from "react-native";
 import Svg, { Circle, Defs, Ellipse, G, LinearGradient as SvgLinearGradient, Path, Rect, Stop } from "react-native-svg";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import Purchases, { LOG_LEVEL } from "react-native-purchases";
 import { getPasswordStrength, isPasswordValid, passwordRuleItems } from "./lib/authRules";
 import {
   adjustedTimeForQuietHours,
@@ -90,6 +91,13 @@ interface DeepInsight {
   isDemo?: boolean;
   weekStart?: string;
   weekEnd?: string;
+  gentleFocusTitle?: string;
+  evidenceLevel?: "limited" | "emerging" | "meaningful" | "strong";
+  completionMessage?: string;
+  reflectionDays?: number;
+  reflectionCount?: number;
+  rewardUnlocked?: boolean;
+  rewardId?: string;
 }
 
 function mobileWeeklyInsightKey(insight: DeepInsight) {
@@ -133,7 +141,34 @@ interface AppState {
   onboardingCoachStep?: "mic" | "journey" | "sanctuary" | null;
   onboardingSkippedAt?: string | null;
   onboardingCompletedAt?: string | null;
+  reflectionCoachMarkSeen?: boolean;
+  journeyCoachMarkSeen?: boolean;
+  sanctuaryCoachMarkSeen?: boolean;
+  onboardingStatus?: "not_started" | "in_progress" | "completed" | "skipped";
+  currentOnboardingStep?: OnboardingStep | null;
+  onboardingVersion?: number;
+  complimentaryAccess?: ComplimentaryAccess | null;
 }
+
+type ComplimentaryAccess = {
+  startedAt: string;
+  endsAt: string;
+  status: "active" | "completed" | "expired";
+  source: "first_week";
+  weeklyReflectionDeliveredAt: string | null;
+  conversionPromptShownAt: string | null;
+  isDemo?: boolean;
+};
+
+type OnboardingStep =
+  | "firstWeek"
+  | "freeWeek"
+  | "trial"
+  | "reflectionCoach"
+  | "journeyCoach"
+  | "sanctuaryCoach";
+
+type CoachTarget = { x: number; y: number; width: number; height: number; centerX: number; centerY: number };
 
 type SanctuaryThemeKey =
   | "blossom"
@@ -510,6 +545,8 @@ const APP_THEME_PALETTES: Partial<Record<SanctuaryThemeKey, AppThemePalette>> & 
 const STORE_KEY = "tranqly-mobile-v1";
 const FREE_AI_INSIGHTS_PER_DAY = 5;
 const TRANQLY_LOGO = require("./assets/images/tranqly_logo.png");
+const REVENUECAT_IOS_API_KEY = process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY?.trim() ?? "";
+const REVENUECAT_ENTITLEMENT_ID = process.env.EXPO_PUBLIC_REVENUECAT_ENTITLEMENT_ID?.trim() || "plus";
 const configuredApiBaseUrl =
   process.env.EXPO_PUBLIC_API_BASE_URL ||
   (Constants.expoConfig?.extra?.apiBaseUrl as string | undefined) ||
@@ -654,6 +691,7 @@ const VOICE_LIMIT_SECONDS = 60;
 const TRANSCRIBE_TIMEOUT_MS = 25000;
 const COACH_TIMEOUT_MS = 30000;
 const DEMO_ID_PREFIX = "tranqly-demo-";
+const FIRST_WEEK_DEMO_ID_PREFIX = "tranqly-first-week-demo-";
 
 function todayKey() {
   const d = new Date();
@@ -716,11 +754,20 @@ function growthEmoji(streak: number) {
 
 function localDeepInsight(text: string): DeepInsight {
   return {
-    headline: "A quiet observation",
-    insight: `I noticed you shared something today. Even on the quieter days, showing up matters.`,
-    suggestion: text.length > 50 ? "Try breaking your thoughts into smaller pieces tomorrow." : "Consider writing a little more tomorrow. There might be more beneath the surface.",
-    affirmation: "You're doing the work. That's enough.",
+    headline: "A few moments from your week",
+    insight: text.trim()
+      ? "One moment stood out from what you shared. It may not show a full pattern yet, but it gives a clear glimpse into what was asking for your attention."
+      : "You did not share a reflection this week, so there is not a personal pattern to bring together yet. Your space is still here whenever you feel ready to return.",
+    suggestion: "Notice one moment this week where you feel a little more settled, supported, or clear.",
+    affirmation: "There is no perfect way to reflect. You can return whenever it feels useful.",
     createdAt: new Date().toISOString(),
+    gentleFocusTitle: "Next gentle focus",
+    evidenceLevel: text.trim() ? "limited" : "limited",
+    completionMessage: text.trim() ? "One honest moment can still give you something meaningful to return to." : "Your space is still here whenever you feel ready.",
+    reflectionDays: text.trim() ? 1 : 0,
+    reflectionCount: text.trim() ? 1 : 0,
+    rewardUnlocked: false,
+    rewardId: "none",
   };
 }
 
@@ -952,8 +999,8 @@ const DEMO_ENTRIES: DemoEntrySeed[] = [
   },
 ];
 
-function dateForDemo(daysAgo: number, time: string) {
-  const date = new Date();
+function dateForDemo(daysAgo: number, time: string, base = new Date()) {
+  const date = new Date(base);
   date.setDate(date.getDate() - daysAgo);
   const [hours, minutes] = time.split(":").map(Number);
   date.setHours(hours, minutes, 0, 0);
@@ -1020,11 +1067,79 @@ function buildDemoDeepInsight(): DeepInsight {
       "This week, try one ten minute reset before the busiest part of the day. Keep it small enough that it still works on a messy day.",
     affirmation: "You do not need a perfect routine to understand what helps you.",
     createdAt: new Date().toISOString(),
+    gentleFocusTitle: "Next gentle focus",
+    evidenceLevel: "meaningful",
+    completionMessage: "Your reflections gave Tranqly a meaningful view into the week.",
+    reflectionDays: 7,
+    reflectionCount: 7,
+    rewardUnlocked: true,
+    rewardId: "forest-haven",
   };
 }
 
 function isDemoCheckIn(entry: CheckIn) {
-  return entry.id.startsWith(DEMO_ID_PREFIX);
+  return entry.id.startsWith(DEMO_ID_PREFIX) || entry.id.startsWith(FIRST_WEEK_DEMO_ID_PREFIX);
+}
+
+function buildFirstWeekTrialDemo(now = new Date()) {
+  const weekSeeds = DEMO_ENTRIES.slice(0, 7);
+  const periodStart = new Date(now);
+  periodStart.setDate(periodStart.getDate() - 7);
+  periodStart.setHours(0, 0, 0, 0);
+  const periodEnd = new Date(now);
+  periodEnd.setDate(periodEnd.getDate() - 1);
+  periodEnd.setHours(23, 59, 59, 999);
+  const checkIns = weekSeeds.map((seed, index) => {
+    const date = dateForDemo(7 - index, seed.time, now);
+    const createdAt = date.toISOString();
+    return {
+      id: `${FIRST_WEEK_DEMO_ID_PREFIX}${index}`,
+      text: seed.text,
+      createdAt,
+      dateKey: dateKeyOfDate(date),
+      source: seed.source,
+      prompt: seed.prompt,
+      promptType: "first_week_demo",
+      promptWhy: "Tranqly chose this from the themes in your first week.",
+      reply: demoReply(seed, createdAt),
+    } as CheckIn;
+  }).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const moods: Record<string, string> = {};
+  for (const entry of checkIns) {
+    const seed = weekSeeds.find((item) => item.text === entry.text);
+    if (seed) moods[entry.dateKey] = seed.mood;
+  }
+  const createdAt = now.toISOString();
+  const deepInsight: DeepInsight = {
+    headline: "Your first week showed what helps you steady yourself",
+    insight:
+      "Across your reflections this week, a clear thread appeared: rest, small pauses, and easy connection seemed to make the week feel more manageable. You began noticing which moments helped you feel steadier and more like yourself.",
+    suggestion:
+      "Protect one small reset during the coming week. A short walk, a smaller list, or a quieter evening may be enough.",
+    affirmation:
+      "You showed up for seven quiet moments, and that gave Tranqly something real to learn from.",
+    createdAt,
+    isDemo: true,
+    weekStart: checkIns[checkIns.length - 1]?.dateKey,
+    weekEnd: checkIns[0]?.dateKey,
+    gentleFocusTitle: "Next gentle focus",
+    evidenceLevel: "strong",
+    completionMessage: "You made space to reflect every day this week.",
+    reflectionDays: 7,
+    reflectionCount: 7,
+    rewardUnlocked: true,
+    rewardId: "forest-haven",
+  };
+  const complimentaryAccess: ComplimentaryAccess = {
+    startedAt: periodStart.toISOString(),
+    endsAt: periodEnd.toISOString(),
+    status: "completed",
+    source: "first_week",
+    weeklyReflectionDeliveredAt: createdAt,
+    conversionPromptShownAt: null,
+    isDemo: true,
+  };
+  return { checkIns, moods, deepInsight, complimentaryAccess };
 }
 
 function localCoachReply(text: string): CoachReply {
@@ -1072,7 +1187,7 @@ function localCoachReply(text: string): CoachReply {
   if (tired) {
     return {
       message:
-        "This sounds like a low-energy day, not a failed one. You noticed your limits, and that matters because patterns usually start showing up through tired days first.",
+        "This sounds like a low-energy day, not a verdict on you. You noticed your limits, and that matters because patterns usually start showing up through tired days first.",
       title: "You made room for a tired day",
       pattern: "Low-energy days may be worth tracking alongside what helped you recover.",
       summary: "Energy felt low today.",
@@ -1618,6 +1733,35 @@ function currentWeekReflectionDays(entries: CheckIn[]) {
       })
       .map((entry) => entry.dateKey)
   ).size;
+}
+
+function createFirstWeekAccess(now = new Date()): ComplimentaryAccess {
+  const endsAtDate = new Date(now);
+  endsAtDate.setDate(endsAtDate.getDate() + 7);
+  return {
+    startedAt: now.toISOString(),
+    endsAt: endsAtDate.toISOString(),
+    status: "active",
+    source: "first_week",
+    weeklyReflectionDeliveredAt: null,
+    conversionPromptShownAt: null,
+  };
+}
+
+function normalizeComplimentaryAccess(access?: ComplimentaryAccess | null, now = new Date()) {
+  if (!access) return null;
+  if (access.status !== "active") return access;
+  return new Date(access.endsAt).getTime() <= now.getTime()
+    ? { ...access, status: "expired" as const }
+    : access;
+}
+
+function hasActiveComplimentaryAccess(access?: ComplimentaryAccess | null) {
+  return normalizeComplimentaryAccess(access)?.status === "active";
+}
+
+function hasTranqlyAccess(premium: boolean, access?: ComplimentaryAccess | null) {
+  return premium || hasActiveComplimentaryAccess(access);
 }
 
 function isThemeUnlocked(theme: (typeof SANCTUARY_THEMES)[number], checkInCount: number, premium = false) {
@@ -2941,6 +3085,8 @@ export default function App() {
   const short = useWindowDimensions().width < 380;
 
   const [tab, setTab] = useState<Tab>("coach");
+  const tabSlide = useRef(new Animated.Value(0)).current;
+  const tabOpacity = useRef(new Animated.Value(1)).current;
   const [text, setText] = useState("");
   const [pending, setPending] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
@@ -2976,13 +3122,26 @@ export default function App() {
   const [selectedWeeklyInsight, setSelectedWeeklyInsight] = useState<DeepInsight | null>(null);
   const [displayName, setDisplayName] = useState("");
   const [onboardingName, setOnboardingName] = useState("");
-  const [onboardingStep, setOnboardingStep] = useState<"intro" | "name">("intro");
+  const [onboardingStatus, setOnboardingStatus] = useState<"not_started" | "in_progress" | "completed" | "skipped">("completed");
+  const [currentOnboardingStep, setCurrentOnboardingStep] = useState<OnboardingStep | null>(null);
   const [onboardingCompleted, setOnboardingCompleted] = useState(true);
   const [onboardingCoachCompleted, setOnboardingCoachCompleted] = useState(false);
   const [onboardingCoachStep, setOnboardingCoachStep] = useState<"mic" | "journey" | "sanctuary" | null>(null);
   const [onboardingSkippedAt, setOnboardingSkippedAt] = useState<string | null>(null);
   const [onboardingCoachCompletedAt, setOnboardingCoachCompletedAt] = useState<string | null>(null);
+  const [complimentaryAccess, setComplimentaryAccess] = useState<ComplimentaryAccess | null>(null);
+  const [reflectionCoachMarkSeen, setReflectionCoachMarkSeen] = useState(false);
+  const [journeyCoachMarkSeen, setJourneyCoachMarkSeen] = useState(false);
+  const [sanctuaryCoachMarkSeen, setSanctuaryCoachMarkSeen] = useState(false);
+  const [coachTarget, setCoachTarget] = useState<CoachTarget | null>(null);
+  const [coachMarksReady, setCoachMarksReady] = useState(false);
+  const [showOnboardingComplete, setShowOnboardingComplete] = useState(false);
+  const micCoachTargetRef = useRef<View>(null);
+  const journeyCoachTargetRef = useRef<View>(null);
+  const sanctuaryCoachTargetRef = useRef<View>(null);
+  const purchasesConfiguredRef = useRef(false);
   const [showPremiumModal, setShowPremiumModal] = useState(false);
+  const [selectedPlan, setSelectedPlan] = useState<"yearly" | "monthly">("yearly");
   const [showSanctuaryModal, setShowSanctuaryModal] = useState(false);
   const [showAllReflections, setShowAllReflections] = useState(false);
   const [checkoutBusy, setCheckoutBusy] = useState(false);
@@ -2996,11 +3155,19 @@ export default function App() {
   const [showNotificationPrompt, setShowNotificationPrompt] = useState(false);
   const [notificationsExpanded, setNotificationsExpanded] = useState(false);
   const [notificationDraft, setNotificationDraft] = useState<NotificationSettings>(DEFAULT_NOTIFICATION_SETTINGS);
+  const [storageLoaded, setStorageLoaded] = useState(false);
   const passwordRules = passwordRuleItems(authPassword);
   const passwordStrength = getPasswordStrength(authPassword);
 
   useEffect(() => {
     AsyncStorage.getItem(STORE_KEY).then((raw) => {
+      if (!raw) {
+        setOnboardingCompleted(false);
+        setOnboardingStatus("not_started");
+        setCurrentOnboardingStep("firstWeek");
+        setStorageLoaded(true);
+        return;
+      }
       if (raw)
         try {
           const parsed: AppState = JSON.parse(raw);
@@ -3017,13 +3184,27 @@ export default function App() {
           setDisplayName(parsed.displayName || "");
           setOnboardingName(parsed.displayName || "");
           setOnboardingCompleted(parsed.onboardingCompleted ?? true);
+          const migratedStatus = parsed.onboardingStatus ?? ((parsed.onboardingCompleted ?? true) ? "completed" : "not_started");
+          setOnboardingStatus(migratedStatus);
+          const persistedOnboardingStep = parsed.currentOnboardingStep as string | null | undefined;
+          const migratedStep = persistedOnboardingStep === "welcome" || persistedOnboardingStep === "name"
+            ? "firstWeek"
+            : persistedOnboardingStep === "trial"
+              ? "freeWeek"
+              : parsed.currentOnboardingStep;
+          setCurrentOnboardingStep(migratedStep ?? (migratedStatus === "not_started" ? "firstWeek" : parsed.onboardingCoachStep === "mic" ? "reflectionCoach" : null));
           setOnboardingCoachCompleted(parsed.onboardingCoachCompleted ?? false);
           setOnboardingCoachStep(parsed.onboardingCoachStep ?? null);
           setOnboardingSkippedAt(parsed.onboardingSkippedAt ?? null);
           setOnboardingCoachCompletedAt(parsed.onboardingCompletedAt ?? null);
+          setReflectionCoachMarkSeen(parsed.reflectionCoachMarkSeen ?? false);
+          setJourneyCoachMarkSeen(parsed.journeyCoachMarkSeen ?? false);
+          setSanctuaryCoachMarkSeen(parsed.sanctuaryCoachMarkSeen ?? false);
+          setComplimentaryAccess(normalizeComplimentaryAccess(parsed.complimentaryAccess));
           setSanctuaryTheme(parsed.sanctuaryTheme || "twilight");
           setDraftSanctuaryTheme(parsed.sanctuaryTheme || "twilight");
         } catch {}
+      setStorageLoaded(true);
     });
   }, []);
 
@@ -3038,6 +3219,21 @@ export default function App() {
   }, [notificationSettings]);
 
   useEffect(() => {
+    if (!storageLoaded || !complimentaryAccess || complimentaryAccess.status !== "active") return;
+    const syncAccessStatus = () => {
+      const normalized = normalizeComplimentaryAccess(complimentaryAccess);
+      if (normalized?.status !== complimentaryAccess.status) {
+        setComplimentaryAccess(normalized);
+      }
+    };
+    syncAccessStatus();
+    const delay = Math.max(1000, new Date(complimentaryAccess.endsAt).getTime() - Date.now() + 1000);
+    const timeout = setTimeout(syncAccessStatus, delay);
+    return () => clearTimeout(timeout);
+  }, [complimentaryAccess, storageLoaded]);
+
+  useEffect(() => {
+    if (!storageLoaded) return;
     const state: AppState = {
       checkIns,
       premium,
@@ -3055,6 +3251,13 @@ export default function App() {
       onboardingCoachStep,
       onboardingSkippedAt,
       onboardingCompletedAt: onboardingCoachCompletedAt,
+      reflectionCoachMarkSeen,
+      journeyCoachMarkSeen,
+      sanctuaryCoachMarkSeen,
+      onboardingStatus,
+      currentOnboardingStep,
+      onboardingVersion: 2,
+      complimentaryAccess: normalizeComplimentaryAccess(complimentaryAccess),
     };
     AsyncStorage.setItem(STORE_KEY, JSON.stringify(state));
   }, [
@@ -3074,7 +3277,24 @@ export default function App() {
     onboardingCoachStep,
     onboardingSkippedAt,
     onboardingCoachCompletedAt,
+    reflectionCoachMarkSeen,
+    journeyCoachMarkSeen,
+    sanctuaryCoachMarkSeen,
+    onboardingStatus,
+    currentOnboardingStep,
+    complimentaryAccess,
+    storageLoaded,
   ]);
+
+  useEffect(() => {
+    if (!storageLoaded || Platform.OS !== "ios" || !REVENUECAT_IOS_API_KEY || purchasesConfiguredRef.current) return;
+    purchasesConfiguredRef.current = true;
+    void Purchases.setLogLevel(__DEV__ ? LOG_LEVEL.DEBUG : LOG_LEVEL.ERROR);
+    Purchases.configure({ apiKey: REVENUECAT_IOS_API_KEY, appUserID: authUser?.localId || undefined });
+    void Purchases.getCustomerInfo()
+      .then((customerInfo) => setPremium(Boolean(customerInfo.entitlements.active[REVENUECAT_ENTITLEMENT_ID])))
+      .catch((error) => console.warn("RevenueCat entitlement check failed", error));
+  }, [authUser?.localId, storageLoaded]);
 
   const todayMood = moods[todayKey()] || null;
 
@@ -3282,6 +3502,65 @@ export default function App() {
   const densityMode: "compact" | "regular" | "comfortable" = screenHeight < 650 ? "compact" : screenHeight <= 780 ? "regular" : "comfortable";
   const shortLayout = densityMode === "compact";
   const micDiameter = densityMode === "compact" ? 104 : densityMode === "regular" ? 126 : 146;
+  const initialOnboardingOpen = !onboardingCompleted &&
+    (currentOnboardingStep === "firstWeek" || currentOnboardingStep === "freeWeek" || currentOnboardingStep === "trial");
+  const activeCoachStep = onboardingStatus === "in_progress" &&
+    (currentOnboardingStep === "reflectionCoach" || currentOnboardingStep === "journeyCoach" || currentOnboardingStep === "sanctuaryCoach")
+    ? currentOnboardingStep
+    : null;
+  const onboardingCardHeight = Math.min(
+    Math.max(screenHeight * 0.78, Math.min(640, screenHeight - 28)),
+    screenHeight - 28
+  );
+
+  function measureCoachTarget() {
+    if (!activeCoachStep) return;
+    const ref = activeCoachStep === "reflectionCoach"
+      ? micCoachTargetRef
+      : activeCoachStep === "journeyCoach"
+        ? journeyCoachTargetRef
+        : sanctuaryCoachTargetRef;
+    requestAnimationFrame(() => {
+      const node = ref.current as unknown as {
+        getBoundingClientRect?: () => { left: number; top: number; width: number; height: number };
+        measureInWindow?: (callback: (x: number, y: number, width: number, height: number) => void) => void;
+      } | null;
+      const saveTarget = (x: number, y: number, width: number, height: number) => {
+        if (!width || !height) return;
+        setCoachTarget({ x, y, width, height, centerX: x + width / 2, centerY: y + height / 2 });
+      };
+      if (Platform.OS === "web" && node?.getBoundingClientRect) {
+        const rect = node.getBoundingClientRect();
+        saveTarget(rect.left, rect.top, rect.width, rect.height);
+        return;
+      }
+      node?.measureInWindow?.(saveTarget);
+    });
+  }
+
+  useEffect(() => {
+    if (!activeCoachStep) {
+      setCoachTarget(null);
+      setCoachMarksReady(false);
+      return;
+    }
+    setCoachTarget(null);
+    setCoachMarksReady(false);
+    const measureTimer = setTimeout(measureCoachTarget, 80);
+    const revealTimer = setTimeout(() => setCoachMarksReady(true), 260);
+    return () => {
+      clearTimeout(measureTimer);
+      clearTimeout(revealTimer);
+    };
+  }, [activeCoachStep, screenHeight, screenWidth]);
+
+  const coachCardHeight = activeCoachStep === "reflectionCoach" ? 166 : 154;
+  const coachCardTop = activeCoachStep === "reflectionCoach"
+    ? Math.min(screenHeight - coachCardHeight - 104, Math.max(18, screenHeight * 0.58))
+    : coachTarget
+      ? Math.max(18, Math.min(screenHeight - coachCardHeight - 18, coachTarget.y - coachCardHeight - 12))
+      : Math.max(18, screenHeight - coachCardHeight - 132);
+  const coachPointerStartY = activeCoachStep === "reflectionCoach" ? coachCardTop : coachCardTop + coachCardHeight;
   const micPulse = useRef(new Animated.Value(1)).current;
   const recordingStoppingRef = useRef(false);
   const promptSelection = selectMobilePrompt(checkIns, sanctuaryTheme, moods[todayKey()] || null, promptOffset);
@@ -3364,6 +3643,10 @@ export default function App() {
     if (!trimmed || pending) return;
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setComposerError("");
+    if (needsWeekTwo) {
+      promptWeekTwoContinuation();
+      return;
+    }
     if (!API_BASE_URL) {
       Alert.alert(
         "Server not configured",
@@ -3436,10 +3719,10 @@ export default function App() {
     setReflectionSource("typed");
 
     const todayUsage = coachUsage.dateKey === todayKey() ? coachUsage : { dateKey: todayKey(), count: 0 };
-    if (!premium && todayUsage.count >= FREE_AI_INSIGHTS_PER_DAY) {
+    if (!effectivePremium && todayUsage.count >= FREE_AI_INSIGHTS_PER_DAY) {
       Alert.alert(
         "Reflection saved",
-        "You've reached your free insight limit for today. Upgrade to Tranqly Plus for unlimited insights."
+        "Your reflection was saved. Begin Week Two when you are ready for more Tranqly insights."
       );
       setShowPremiumModal(true);
       return;
@@ -3482,7 +3765,7 @@ export default function App() {
             .filter((item) => item.prompt),
           recentHelpfulFeedback: responseFeedbackHistory.slice(0, 5),
           currentSanctuary: sanctuaryTheme,
-          userPlan: premium ? "plus" : "free",
+          userPlan: effectivePremium ? "plus" : "free",
           history: checkIns,
           recentEntries: checkIns.slice(0, 10).map((c) => ({
             text: c.text,
@@ -3673,8 +3956,26 @@ export default function App() {
     setTimeout(() => setGrowthNotice(""), 4500);
   }
 
+  function addFirstWeekTrialDemo() {
+    const demo = buildFirstWeekTrialDemo();
+    const realCheckIns = checkIns.filter((entry) => !isDemoCheckIn(entry));
+    setCheckIns([...demo.checkIns, ...realCheckIns].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
+    setMoods((current) => ({ ...demo.moods, ...current }));
+    setLastDeepInsight(demo.deepInsight);
+    setWeeklyInsights((current) => dedupeMobileWeeklyInsights([demo.deepInsight, ...current.filter((item) => !item.isDemo)]));
+    setPremium(false);
+    setComplimentaryAccess(demo.complimentaryAccess);
+    setSanctuaryTheme("twilight");
+    setDraftSanctuaryTheme("twilight");
+    setGrowthNotice("Day 7 trial demo added. The first-week completion flow should appear.");
+    setTimeout(() => setGrowthNotice(""), 4500);
+  }
+
   function removeDemoData() {
-    const demoDateKeys = new Set(buildDemoCheckIns().map((entry) => entry.dateKey));
+    const demoDateKeys = new Set([
+      ...buildDemoCheckIns(),
+      ...buildFirstWeekTrialDemo().checkIns,
+    ].map((entry) => entry.dateKey));
     const remainingCheckIns = checkIns.filter((entry) => !isDemoCheckIn(entry));
     const remainingDateKeys = new Set(remainingCheckIns.map((entry) => entry.dateKey));
     setCheckIns(remainingCheckIns);
@@ -3687,6 +3988,7 @@ export default function App() {
     });
     setLastDeepInsight((current) => current?.isDemo ? null : current);
     setWeeklyInsights((current) => current.filter((item) => !item.isDemo));
+    setComplimentaryAccess((current) => current?.isDemo ? null : current);
     setGrowthNotice("Demo data removed. Your real reflections were kept.");
     setTimeout(() => setGrowthNotice(""), 4500);
   }
@@ -3696,38 +3998,136 @@ export default function App() {
     setShowPremiumModal(true);
   }
 
-  function finishCoachMarks(skipped: boolean) {
+  function pressBottomTab(nextTab: Tab) {
+    if (nextTab === tab) return;
+    const order: Tab[] = ["coach", "journey", "you"];
+    const direction = order.indexOf(nextTab) > order.indexOf(tab) ? 1 : -1;
+    void Haptics.selectionAsync();
+    tabSlide.setValue(direction * 26);
+    tabOpacity.setValue(0.92);
+    setTab(nextTab);
+    Animated.parallel([
+      Animated.timing(tabSlide, {
+        toValue: 0,
+        duration: 210,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(tabOpacity, {
+        toValue: 1,
+        duration: 180,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }
+
+  function skipOnboarding() {
     const now = new Date().toISOString();
+    Keyboard.dismiss();
+    setShowOnboardingComplete(false);
+    setDisplayName(onboardingName.trim());
+    setOnboardingCompleted(true);
+    setOnboardingStatus("skipped");
+    setCurrentOnboardingStep(null);
     setOnboardingCoachCompleted(true);
     setOnboardingCoachStep(null);
+    setReflectionCoachMarkSeen(true);
+    setJourneyCoachMarkSeen(true);
+    setSanctuaryCoachMarkSeen(true);
+    setOnboardingSkippedAt(now);
     setOnboardingCoachCompletedAt(now);
-    if (skipped) setOnboardingSkippedAt(now);
-    if (!skipped) setTab("coach");
+    setComplimentaryAccess((current) => current ?? createFirstWeekAccess());
+    setTab("coach");
   }
 
   function nextCoachMark() {
-    if (onboardingCoachStep === "mic") {
-      setOnboardingCoachStep("journey");
-      setTab("journey");
+    setCoachTarget(null);
+    setCoachMarksReady(false);
+    if (currentOnboardingStep === "reflectionCoach") {
+      setReflectionCoachMarkSeen(true);
+      setCurrentOnboardingStep("journeyCoach");
       return;
     }
-    if (onboardingCoachStep === "journey") {
-      setOnboardingCoachStep("sanctuary");
-      setTab("you");
+    if (currentOnboardingStep === "journeyCoach") {
+      setJourneyCoachMarkSeen(true);
+      setCurrentOnboardingStep("sanctuaryCoach");
       return;
     }
-    finishCoachMarks(false);
+    const now = new Date().toISOString();
+    setSanctuaryCoachMarkSeen(true);
+    setOnboardingStatus("completed");
+    setCurrentOnboardingStep(null);
+    setOnboardingCoachCompleted(true);
+    setOnboardingCoachCompletedAt(now);
+    setComplimentaryAccess((current) => current ?? createFirstWeekAccess());
+    setShowOnboardingComplete(true);
   }
 
-  useEffect(() => {
-    if (!onboardingCompleted || onboardingCoachCompleted || !onboardingCoachStep) return;
-    if (onboardingCoachStep === "mic" && tab !== "coach") setTab("coach");
-    if (onboardingCoachStep === "journey" && tab !== "journey") setTab("journey");
-    if (onboardingCoachStep === "sanctuary" && tab !== "you") setTab("you");
-  }, [onboardingCoachCompleted, onboardingCoachStep, onboardingCompleted, tab]);
+  function completeInitialOnboarding() {
+    Keyboard.dismiss();
+    setDisplayName(onboardingName.trim());
+    setOnboardingCompleted(true);
+    setOnboardingStatus("in_progress");
+    setCurrentOnboardingStep("reflectionCoach");
+    setOnboardingCoachCompleted(false);
+    setOnboardingCoachStep(null);
+    setReflectionCoachMarkSeen(false);
+    setJourneyCoachMarkSeen(false);
+    setSanctuaryCoachMarkSeen(false);
+    setOnboardingSkippedAt(null);
+    setOnboardingCoachCompletedAt(null);
+    setTab("coach");
+  }
+
+  function moveInitialOnboarding(next: "firstWeek" | "freeWeek") {
+    Keyboard.dismiss();
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setOnboardingStatus("in_progress");
+    setCurrentOnboardingStep(next);
+  }
 
   async function startCheckout() {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    if (Platform.OS === "ios") {
+      if (!REVENUECAT_IOS_API_KEY || !purchasesConfiguredRef.current) {
+        Alert.alert(
+          "Purchases unavailable",
+          "App Store purchases are not configured for this build yet."
+        );
+        return;
+      }
+      setCheckoutBusy(true);
+      try {
+        const offerings = await Purchases.getOfferings();
+        const currentOffering = offerings.current;
+        const planPackage = selectedPlan === "yearly"
+          ? currentOffering?.annual ?? currentOffering?.availablePackages.find((item) => item.packageType === "ANNUAL")
+          : currentOffering?.monthly ?? currentOffering?.availablePackages.find((item) => item.packageType === "MONTHLY");
+        if (!planPackage) {
+          Alert.alert("Checkout unavailable", "Tranqly Plus is not available in this build yet.");
+          return;
+        }
+        const result = await Purchases.purchasePackage(planPackage);
+        const plusActive = Boolean(result.customerInfo.entitlements.active[REVENUECAT_ENTITLEMENT_ID]);
+        if (!plusActive) {
+          Alert.alert("Purchase not activated", "The App Store did not activate Tranqly Plus. Please try again.");
+          return;
+        }
+        setPremium(true);
+        setShowPremiumModal(false);
+        return;
+      } catch (error) {
+        const purchaseError = error as { userCancelled?: boolean; message?: string };
+        if (!purchaseError.userCancelled) {
+          console.warn("RevenueCat purchase failed", error);
+          Alert.alert("Checkout unavailable", "Checkout could not start. Please try again.");
+        }
+        return;
+      } finally {
+        setCheckoutBusy(false);
+      }
+    }
     if (!API_BASE_URL) {
       Alert.alert(
         "Checkout unavailable",
@@ -3737,13 +4137,17 @@ export default function App() {
     }
     setCheckoutBusy(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/checkout`, { method: "POST" });
+      const res = await fetch(`${API_BASE_URL}/api/checkout`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan: selectedPlan }),
+      });
       const data = await res.json();
       if (data.url) {
         await Linking.openURL(data.url);
         return;
       }
-      if (data.demo) {
+      if (data.demo && __DEV__) {
         setPremium(true);
         setShowPremiumModal(false);
         return;
@@ -3751,6 +4155,31 @@ export default function App() {
       Alert.alert("Checkout unavailable", "Checkout could not start. Please try again.");
     } catch {
       Alert.alert("Checkout unavailable", "Checkout could not start. Please try again.");
+    } finally {
+      setCheckoutBusy(false);
+    }
+  }
+
+  async function restoreAppStorePurchases() {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (Platform.OS !== "ios" || !REVENUECAT_IOS_API_KEY || !purchasesConfiguredRef.current) {
+      Alert.alert("Restore unavailable", "App Store purchases are not configured for this build yet.");
+      return;
+    }
+    setCheckoutBusy(true);
+    try {
+      const customerInfo = await Purchases.restorePurchases();
+      const plusActive = Boolean(customerInfo.entitlements.active[REVENUECAT_ENTITLEMENT_ID]);
+      setPremium(plusActive);
+      if (plusActive) {
+        setShowPremiumModal(false);
+        Alert.alert("Purchase restored", "Tranqly Plus is active again.");
+      } else {
+        Alert.alert("No purchase found", "No active Tranqly Plus purchase was found for this App Store account.");
+      }
+    } catch (error) {
+      console.warn("RevenueCat restore failed", error);
+      Alert.alert("Restore unavailable", "Tranqly could not restore purchases. Please try again.");
     } finally {
       setCheckoutBusy(false);
     }
@@ -3792,7 +4221,60 @@ export default function App() {
   const firstName = displayName.trim().split(/\s+/)[0];
   const selectedSanctuary = getSanctuaryTheme(sanctuaryTheme);
   const detailSanctuary = getSanctuaryTheme(sanctuaryDetailTheme);
-  const upcomingSanctuary = nextThemeUnlock(totalReflectionDays, premium);
+  const forestHavenReward = getSanctuaryTheme("forest");
+  const effectivePremium = hasTranqlyAccess(premium, complimentaryAccess);
+  const showFirstWeekCompleteModal = Boolean(
+    onboardingCompleted &&
+      !premium &&
+      complimentaryAccess &&
+      (complimentaryAccess.status === "completed" || complimentaryAccess.status === "expired") &&
+      !complimentaryAccess.conversionPromptShownAt
+  );
+  const needsWeekTwo =
+    !premium &&
+    complimentaryAccess &&
+    (complimentaryAccess.status === "completed" || complimentaryAccess.status === "expired");
+  const firstWeekEntries = complimentaryAccess
+    ? checkIns.filter((entry) => {
+        const time = new Date(entry.createdAt).getTime();
+        return time >= new Date(complimentaryAccess.startedAt).getTime() && time <= new Date(complimentaryAccess.endsAt).getTime();
+      })
+    : [];
+  const firstWeekReflectionDays = new Set(firstWeekEntries.map((entry) => entry.dateKey)).size;
+  const firstWeekInsight = weeklyInsights[0] ?? lastDeepInsight;
+  const firstWeekSummaryItems = firstWeekReflectionDays >= 7
+    ? ["7 reflection days", "1 weekly reflection", "Forest Haven unlocked"]
+    : firstWeekReflectionDays >= 2
+      ? [`${firstWeekReflectionDays} reflection days`, "1 weekly reflection", "A few themes noticed"]
+      : firstWeekReflectionDays === 1
+        ? ["1 reflection day", "1 weekly reflection", "1 moment worth revisiting"]
+        : ["Your space is still here", "1 gentle weekly note"];
+  const firstWeekReflectionText = (firstWeekInsight?.insight ??
+    (firstWeekEntries.length
+      ? "You took time to check in with yourself this week. What you shared may not form a full pattern yet, but it still gives you something meaningful to return to."
+      : "You did not share a reflection this week, so there is not a personal pattern to bring together yet. Your space is still here whenever you feel ready to return."))
+    .replace(/Across these seven reflections, Tranqly noticed a clear thread:/i, "Across your reflections this week, a clear thread appeared:")
+    .replace(/Across these seven reflections/i, "Across your reflections this week")
+    .replace(/You were beginning to notice which moments helped you feel steadier and return to yourself\./i, "You began noticing which moments helped you feel steadier and more like yourself.");
+  const firstWeekPlanLabel = selectedPlan === "yearly" ? "Yearly plan selected" : "Monthly plan selected";
+  const firstWeekPlanBilling = selectedPlan === "yearly" ? "$59.99 billed annually" : "$5.99 billed monthly";
+  function markFirstWeekConversionSeen() {
+    setComplimentaryAccess((current) =>
+      current
+        ? {
+            ...current,
+            conversionPromptShownAt: new Date().toISOString(),
+          }
+        : current
+    );
+  }
+  function promptWeekTwoContinuation() {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setGrowthNotice("Your first week is complete. Ready for another one?");
+    setTimeout(() => setGrowthNotice(""), 6500);
+    setShowPremiumModal(true);
+  }
+  const upcomingSanctuary = nextThemeUnlock(totalReflectionDays, effectivePremium);
   const reflectionsToNextSanctuary = upcomingSanctuary
     ? Math.max(0, upcomingSanctuary.unlockDays - totalReflectionDays)
     : 0;
@@ -3800,8 +4282,12 @@ export default function App() {
     ? Math.max(0, totalReflectionDays - detailSanctuary.unlockDays)
     : totalReflectionDays;
   const appTheme = APP_THEME_PALETTES[sanctuaryTheme] || APP_THEME_PALETTES.twilight;
+  const firstWeekDay = complimentaryAccess?.status === "active"
+    ? Math.min(7, Math.max(1, Math.floor((Date.now() - new Date(complimentaryAccess.startedAt).getTime()) / 86400000) + 1))
+    : 1;
   const reminderSuggestion = adaptiveSuggestion(notificationSettings);
   const hasDemoData = checkIns.some(isDemoCheckIn);
+  const hasFirstWeekTrialDemo = complimentaryAccess?.isDemo === true;
   const voiceProgress = Math.min(1, voiceElapsed / VOICE_LIMIT_SECONDS);
   const composerStatus = composerError
     ? composerError
@@ -3852,124 +4338,200 @@ export default function App() {
     <SafeAreaProvider style={[styles.appRoot, { backgroundColor: appTheme.bg }]}>
       <SafeAreaView style={[styles.shell, { backgroundColor: appTheme.bg }]}>
         <StatusBar style="light" />
-        <Modal
-          visible={!onboardingCompleted}
-          transparent
-          animationType="fade"
-          onRequestClose={() => setOnboardingCompleted(true)}
-        >
+        <Modal visible={initialOnboardingOpen} transparent animationType="fade" onRequestClose={skipOnboarding}>
+          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.flex}>
           <Pressable style={styles.onboardingOverlay} onPress={Keyboard.dismiss}>
-            <Pressable style={[styles.onboardingCard, themedCard]} onPress={Keyboard.dismiss}>
-              <View style={[styles.onboardingLotus, { borderColor: appTheme.accent, backgroundColor: appTheme.helperBg }]}>
-                <ThemeIcon type="blossom" color={appTheme.accent} size={44} />
+            <Pressable
+              onPress={Keyboard.dismiss}
+              style={[styles.onboardingCardShell, themedCard, { height: onboardingCardHeight }]}
+            >
+              <View style={styles.onboardingHeader}>
+                <Text style={[styles.onboardingStepText, themedAccent]}>
+                  Step {currentOnboardingStep === "firstWeek" ? "1" : "2"} of 5
+                </Text>
+                <View style={styles.onboardingProgressRow}>
+                  {Array.from({ length: 5 }, (_, index) => (
+                    <View
+                      key={index}
+                      style={[
+                        styles.onboardingProgressSegment,
+                        { backgroundColor: index < (currentOnboardingStep === "firstWeek" ? 1 : 2) ? appTheme.accent : appTheme.ink },
+                      ]}
+                    />
+                  ))}
+                </View>
+                <View style={[styles.onboardingLotus, { borderColor: appTheme.accent, backgroundColor: appTheme.helperBg }]}>
+                  <Image source={TRANQLY_LOGO} style={styles.onboardingLogoImage} resizeMode="contain" />
+                </View>
+                <Text style={[styles.onboardingTitle, themedTitle]}>
+                  {currentOnboardingStep === "firstWeek"
+                    ? "Your first week with Tranqly"
+                    : "Begin your journey"}
+                </Text>
+                <Text style={[styles.onboardingBody, themedBody]}>
+                  {currentOnboardingStep === "firstWeek"
+                    ? "Over the next seven days, Tranqly will help you reflect, notice recurring themes, and prepare your first weekly reflection."
+                    : "Your first week is on us. Reflect for seven days, receive your first weekly reflection, then decide whether you'd like to continue."}
+                </Text>
               </View>
-              {onboardingStep === "intro" ? (
-                <>
-                  <Text style={[styles.onboardingTitle, themedTitle]}>Welcome to Tranqly.</Text>
-                  <Text style={[styles.onboardingBody, themedBody]}>
-                    This is your quiet place to reflect for a minute each day. No pressure. No judgment. Just one honest moment at a time.
+
+              <ScrollView
+                style={styles.onboardingMiddle}
+                contentContainerStyle={styles.onboardingMiddleContent}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
+                {currentOnboardingStep === "firstWeek" ? [
+                  ["Today", "Take a minute to reflect by voice or text."],
+                  ["Over the next week", "Every reflection helps Tranqly notice the themes and moments that matter most to you."],
+                  ["Day 7", "At the end of your first week, you will receive a personalized weekly reflection that brings together everything you shared."],
+                ].map(([title, body]) => (
+                  <View key={title} style={[styles.onboardingTimelineItem, themedInk, { borderColor: appTheme.edge }]} accessible accessibilityLabel={`${title}. ${body}`}>
+                    <Text style={[styles.onboardingTimelineTitle, themedAccent]}>{title}</Text>
+                    <Text style={[styles.onboardingTimelineBody, themedBody]}>{body}</Text>
+                  </View>
+                )).concat([
+                  <View key="name-field" style={styles.onboardingNameField}>
+                    <Text style={[styles.onboardingInputLabel, themedBody]}>What should I call you? (Optional)</Text>
+                    <TextInput
+                      value={onboardingName}
+                      onChangeText={setOnboardingName}
+                      placeholder="Your name"
+                      placeholderTextColor={appTheme.faint}
+                      autoCapitalize="words"
+                      blurOnSubmit
+                      returnKeyType="done"
+                      onSubmitEditing={Keyboard.dismiss}
+                      style={[styles.onboardingInput, themedInk, themedTitle, { borderColor: appTheme.edge }]}
+                    />
+                  </View>,
+                ]) : null}
+                {currentOnboardingStep === "freeWeek" || currentOnboardingStep === "trial" ? [
+                  ["Today", "Begin reflecting with full access to Tranqly."],
+                  ["During the week", "Receive thoughtful responses and begin building your first weekly reflection."],
+                  ["Day 7", "Your first weekly reflection will be ready. After you read it, you can decide whether you would like to continue."],
+                ].map(([day, body]) => (
+                  <View key={day} style={[styles.onboardingTrialItem, themedInk, { borderColor: appTheme.edge }]} accessible accessibilityLabel={`${day}. ${body}`}>
+                    <Text style={[styles.onboardingTimelineTitle, themedAccent]}>{day}</Text>
+                    <Text style={[styles.onboardingTrialBody, themedBody]}>{body}</Text>
+                  </View>
+                )) : null}
+              </ScrollView>
+
+              <View style={[styles.onboardingFooter, { borderTopColor: appTheme.edge }]}>
+                <Pressable
+                  onPress={() => {
+                    if (currentOnboardingStep === "firstWeek") moveInitialOnboarding("freeWeek");
+                    else completeInitialOnboarding();
+                  }}
+                  style={[styles.onboardingButton, { backgroundColor: appTheme.button }]}
+                >
+                  <Text style={[styles.onboardingButtonText, themedTitle]}>
+                    {currentOnboardingStep === "firstWeek" ? "Next" : "Begin your journey"}
                   </Text>
-                  <Pressable
-                    onPress={() => {
-                      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      setOnboardingStep("name");
-                    }}
-                    style={[styles.onboardingButton, { backgroundColor: appTheme.button }]}
-                  >
-                    <Text style={[styles.onboardingButtonText, themedTitle]}>Continue</Text>
-                  </Pressable>
-                </>
-              ) : (
-                <>
-                  <Text style={[styles.onboardingTitle, themedTitle]}>Make it yours.</Text>
-                  <Text style={[styles.onboardingBody, themedBody]}>
-                    Add a first name if you want Tranqly to greet you personally.
-                  </Text>
-                  <Text style={[styles.youInputLabel, themedTitle]}>What should I call you? (optional)</Text>
-                  <TextInput
-                    value={onboardingName}
-                    onChangeText={setOnboardingName}
-                    placeholder="Your name"
-                    placeholderTextColor={appTheme.faint}
-                    blurOnSubmit
-                    returnKeyType="done"
-                    onSubmitEditing={Keyboard.dismiss}
-                    style={[styles.youInput, themedInk, themedTitle]}
-                  />
-                  <Pressable
-                    onPress={() => {
-                      Keyboard.dismiss();
-                      const clean = onboardingName.trim();
-                      setDisplayName(clean);
-                      setOnboardingCompleted(true);
-                      setOnboardingCoachCompleted(false);
-                      setOnboardingCoachStep("mic");
-                      setOnboardingSkippedAt(null);
-                      setOnboardingCoachCompletedAt(null);
-                    }}
-                    style={[styles.onboardingButton, { backgroundColor: appTheme.button }]}
-                  >
-                    <Text style={[styles.onboardingButtonText, themedTitle]}>Enter Your Sanctuary</Text>
-                  </Pressable>
-                </>
-              )}
+                </Pressable>
+                {currentOnboardingStep === "freeWeek" || currentOnboardingStep === "trial" ? (
+                  <Text style={[styles.onboardingBillingNote, themedMuted]}>No payment required. Nothing renews automatically.</Text>
+                ) : null}
+              </View>
             </Pressable>
           </Pressable>
+          </KeyboardAvoidingView>
         </Modal>
         <Modal
-          visible={Boolean(onboardingCompleted && !onboardingCoachCompleted && onboardingCoachStep)}
+          visible={Boolean(onboardingCompleted && ((activeCoachStep && coachMarksReady) || showOnboardingComplete))}
           transparent
           animationType="fade"
-          onRequestClose={() => finishCoachMarks(true)}
+          onRequestClose={skipOnboarding}
         >
           <View style={styles.coachMarkOverlay}>
-            <View style={[styles.coachMarkCard, { backgroundColor: appTheme.card, borderColor: appTheme.accent }]}>
+            {showOnboardingComplete ? (
+              <View style={[styles.onboardingCompleteCard, { backgroundColor: appTheme.card, borderColor: appTheme.accent }]}>
+                <Text style={[styles.onboardingCompleteTitle, themedTitle]}>You're all set</Text>
+                <Text style={[styles.onboardingCompleteBody, themedBody]}>
+                  Your first week starts now. Take your time. Your first weekly reflection will be waiting in seven days.
+                </Text>
+                <Pressable
+                  onPress={() => {
+                    setShowOnboardingComplete(false);
+                    setTab("coach");
+                  }}
+                  style={[styles.onboardingCompleteButton, { backgroundColor: appTheme.button }]}
+                >
+                  <Text style={[styles.coachMarkPrimaryText, themedTitle]}>Start reflecting</Text>
+                </Pressable>
+              </View>
+            ) : null}
+            {!showOnboardingComplete && coachTarget ? (
+              <>
+                <View testID="coach-target-highlight" pointerEvents="none" style={[styles.coachMarkHighlight, { left: coachTarget.x - 8, top: coachTarget.y - 8, width: coachTarget.width + 16, height: coachTarget.height + 16, borderRadius: Math.max(coachTarget.width, coachTarget.height), borderColor: appTheme.accent, shadowColor: appTheme.accent }]} />
+                <Svg pointerEvents="none" style={StyleSheet.absoluteFill} width={screenWidth} height={screenHeight}>
+                  <Path d={`M ${screenWidth / 2} ${coachPointerStartY} Q ${screenWidth / 2} ${(coachPointerStartY + coachTarget.centerY) / 2} ${coachTarget.centerX} ${coachTarget.centerY}`} fill="none" stroke={appTheme.accent} strokeWidth={2} strokeDasharray="5 7" />
+                  <Circle cx={coachTarget.centerX} cy={coachTarget.centerY} r={4} fill={appTheme.accent} />
+                </Svg>
+              </>
+            ) : null}
+            {!showOnboardingComplete ? (
+            <View style={[styles.coachMarkCard, { top: coachCardTop, backgroundColor: appTheme.card, borderColor: appTheme.accent }]}>
               <View style={styles.coachMarkHeader}>
-                <View>
+                <View style={styles.coachMarkHeadingCopy}>
                   <Text style={[styles.coachMarkKicker, { color: appTheme.accent2 }]}>
-                    {onboardingCoachStep === "mic" ? "Today's Reflection" : onboardingCoachStep === "journey" ? "Journey" : "Sanctuary"}
+                    {activeCoachStep === "reflectionCoach" ? "Today's Reflection" : activeCoachStep === "journeyCoach" ? "Journey" : "Sanctuary"}
                   </Text>
                   <Text style={[styles.coachMarkTitle, themedTitle]}>
-                    {onboardingCoachStep === "mic"
+                    {activeCoachStep === "reflectionCoach"
                       ? "Your first reflection"
-                      : onboardingCoachStep === "journey"
-                        ? "Watch your journey grow"
-                        : "Your sanctuary is waiting."}
+                      : activeCoachStep === "journeyCoach"
+                        ? "Your Journey"
+                        : "Your sanctuary"}
                   </Text>
                 </View>
-                <Pressable onPress={() => finishCoachMarks(true)} style={[styles.coachMarkClose, themedInk]}>
-                  <Text style={[styles.coachMarkCloseText, themedMuted]}>x</Text>
-                </Pressable>
+                <View style={styles.coachMarkTopActions}>
+                  <Text style={[styles.coachMarkProgressBadge, themedMuted]}>
+                    {activeCoachStep === "reflectionCoach" ? "Step 3 of 5" : activeCoachStep === "journeyCoach" ? "Step 4 of 5" : "Step 5 of 5"}
+                  </Text>
+                  <Pressable
+                    onPress={skipOnboarding}
+                    hitSlop={10}
+                    accessibilityRole="button"
+                    accessibilityLabel="Skip onboarding"
+                    style={[styles.coachMarkCloseButton, { borderColor: appTheme.edge, backgroundColor: appTheme.ink }]}
+                  >
+                    <Text style={[styles.coachMarkCloseText, themedMuted]}>X</Text>
+                  </Pressable>
+                </View>
               </View>
               <Text style={[styles.coachMarkBody, themedBody]}>
-                {onboardingCoachStep === "mic"
-                  ? "Talk for up to 60 seconds, or type instead."
-                  : onboardingCoachStep === "journey"
-                    ? "Your reflections help unlock peaceful sanctuary themes over time."
-                    : "As you reflect, you'll unlock peaceful new sanctuaries to explore."}
+                {activeCoachStep === "reflectionCoach"
+                  ? "Tap the microphone to speak, or type in the box below."
+                  : activeCoachStep === "journeyCoach"
+                    ? "Watch your reflections become a story over time."
+                    : "Choose the environment that feels most calming while you reflect."}
               </Text>
-              <View style={styles.coachMarkMetaRow}>
-                <Text style={[styles.coachMarkProgress, themedMuted]}>
-                  {onboardingCoachStep === "mic" ? "1" : onboardingCoachStep === "journey" ? "2" : "3"} of 3
-                </Text>
-                <Pressable onPress={() => finishCoachMarks(true)} hitSlop={10}>
-                  <Text style={[styles.coachMarkSkipText, themedMuted]}>Skip</Text>
-                </Pressable>
-              </View>
               <View style={styles.coachMarkActions}>
                 <Pressable onPress={nextCoachMark} style={[styles.coachMarkPrimary, { backgroundColor: appTheme.button }]}>
                   <Text style={[styles.coachMarkPrimaryText, themedTitle]}>
-                    {onboardingCoachStep === "sanctuary" ? "Done" : "Continue ->"}
+                    {activeCoachStep === "sanctuaryCoach" ? "Done" : "Next"}
                   </Text>
                 </Pressable>
               </View>
             </View>
+            ) : null}
           </View>
         </Modal>
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : undefined}
           style={[styles.flex, { backgroundColor: appTheme.bg }]}
         >
+          <Animated.View
+            style={[
+              styles.tabContentTransition,
+              {
+                opacity: tabOpacity,
+                transform: [{ translateX: tabSlide }],
+              },
+            ]}
+          >
           {tab === "coach" ? (
             <ScrollView
               testID="insights-scroll"
@@ -4000,6 +4562,23 @@ export default function App() {
                   Discover something new about yourself. Every day.
                 </Text>
               </View>
+
+              {complimentaryAccess?.status === "active" ? (
+                <View style={[styles.firstWeekBanner, { backgroundColor: appTheme.helperBg, borderColor: appTheme.helperEdge }]}>
+                  <Text style={[styles.firstWeekBannerStrong, { color: appTheme.accent2 }]}>Day {firstWeekDay} of 7</Text>
+                  <Text style={[styles.firstWeekBannerText, { color: appTheme.dim }]}>
+                    Your first weekly reflection arrives in seven days.
+                  </Text>
+                </View>
+              ) : null}
+              {needsWeekTwo ? (
+                <View style={[styles.firstWeekBanner, { backgroundColor: appTheme.helperBg, borderColor: appTheme.helperEdge }]}>
+                  <Text style={[styles.firstWeekBannerStrong, { color: appTheme.accent2 }]}>Welcome back.</Text>
+                  <Text style={[styles.firstWeekBannerText, { color: appTheme.dim }]}>
+                    Your first week is waiting if you would like to revisit it. When you are ready, begin Week Two.
+                  </Text>
+                </View>
+              ) : null}
 
               {growthNotice ? (
                 <View style={[styles.growthNoticeCard, { backgroundColor: appTheme.helperBg, borderColor: appTheme.accent }]}>
@@ -4047,6 +4626,8 @@ export default function App() {
                           ]}
                         />
                         <Pressable
+                          ref={micCoachTargetRef}
+                          onLayout={measureCoachTarget}
                           onPress={() => {
                             void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                             void toggleRecord();
@@ -4180,6 +4761,9 @@ export default function App() {
                       ]}
                     />
                     <Pressable
+                      ref={micCoachTargetRef}
+                      onLayout={measureCoachTarget}
+                      testID="reflection-mic"
                       onPress={() => {
                         void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                         void toggleRecord();
@@ -4487,7 +5071,7 @@ export default function App() {
                   <View style={[styles.deepCard, shortLayout && styles.deepCardShort]}>
                     <View style={styles.deepHeader}>
                       <Text style={styles.deepBadge}>DeepInsight</Text>
-                      {!premium && <Text style={styles.deepPremium}>PREMIUM</Text>}
+                      {!effectivePremium && <Text style={styles.deepPremium}>PREMIUM</Text>}
                     </View>
                     <Text style={[styles.deepHeadline, shortLayout && styles.deepHeadlineShort]}>
                       {lastDeepInsight?.headline}
@@ -4627,7 +5211,7 @@ export default function App() {
                   <View>
                     <Text style={[styles.journeySectionTitle, themedAccent2]}>Your Sanctuaries</Text>
                     <Text style={[styles.journeyCardText, themedBody]}>
-                      {PRIMARY_SANCTUARY_KEYS.filter((key) => isThemeUnlocked(getSanctuaryTheme(key), totalReflectionDays, premium)).length} of 5 discovered
+                      {PRIMARY_SANCTUARY_KEYS.filter((key) => isThemeUnlocked(getSanctuaryTheme(key), totalReflectionDays, effectivePremium)).length} of 5 discovered
                     </Text>
                   </View>
                   <Text style={[styles.inlinePremiumLink, themedAccent]}>View all</Text>
@@ -4728,7 +5312,7 @@ export default function App() {
                 <View style={[styles.deepCard, { marginBottom: 16 }, shortLayout && styles.deepCardShort]}>
                   <View style={styles.deepHeader}>
                     <Text style={styles.deepBadge}>DeepInsight</Text>
-                    {!premium && <Text style={styles.deepPremium}>PREMIUM</Text>}
+                    {!effectivePremium && <Text style={styles.deepPremium}>PREMIUM</Text>}
                   </View>
                   <Text style={[styles.deepHeadline, shortLayout && styles.deepHeadlineShort]}>
                     {lastDeepInsight?.headline}
@@ -4787,7 +5371,6 @@ export default function App() {
               {/* Recent reflections */}
               {grouped.length === 0 ? (
                 <View style={[styles.emptyState, shortLayout && styles.emptyStateShort]}>
-                  <Text style={[styles.emptyIcon, shortLayout && styles.emptyIconShort]}>Note</Text>
                   <Text style={[styles.emptyText, shortLayout && styles.emptyTextShort]}>
                     No entries yet. Start your journey today.
                   </Text>
@@ -4903,11 +5486,11 @@ export default function App() {
                     <Text style={[styles.youCardBody, themedBody]}>
                       {authUser
                         ? `Signed in as ${authUser.email}.`
-                        : "Sign in to sync your reflections across devices and keep your sanctuary backed up."}
+                        : "Sign in to manage your Tranqly account. Saved reflections remain on this device."}
                     </Text>
                   </View>
                   <Text style={[styles.authStatusPill, { borderColor: appTheme.edge, color: appTheme.accent }]}>
-                    {authUser ? "Synced" : "Local"}
+                    {authUser ? "Connected" : "Local"}
                   </Text>
                 </View>
                 {authUser ? (
@@ -4916,7 +5499,7 @@ export default function App() {
                       <Text style={[styles.authSummaryLabel, themedAccent2]}>Signed in as</Text>
                       <Text style={[styles.authSummaryValue, themedTitle]}>{authUser.email}</Text>
                       <Text style={[styles.youCardMuted, themedMuted]}>
-                        Your reflections are backed up and ready across devices.
+                        Your Tranqly account is connected on this device.
                       </Text>
                     </View>
                     <View style={styles.authButtonRow}>
@@ -4933,20 +5516,6 @@ export default function App() {
                   </View>
                 ) : (
                   <View style={styles.authForm}>
-                    <Pressable
-                      disabled={authBusy}
-                      style={[styles.authSecondaryButton, { borderColor: appTheme.edge }]}
-                      onPress={() => setAuthNotice("Apple sign-in is not configured for this mobile build yet.")}
-                    >
-                      <Text style={[styles.authSecondaryText, themedTitle]}>{authBusy ? "Working..." : "Continue with Apple"}</Text>
-                    </Pressable>
-                    <Pressable
-                      disabled={authBusy}
-                      style={[styles.authSecondaryButton, { borderColor: appTheme.edge }]}
-                      onPress={() => setAuthNotice("Google sign-in is not configured for this mobile build yet.")}
-                    >
-                      <Text style={[styles.authSecondaryText, themedTitle]}>{authBusy ? "Working..." : "Continue with Google"}</Text>
-                    </Pressable>
                     <Pressable
                       style={[styles.authPrimaryButton, { backgroundColor: appTheme.button }]}
                       onPress={() => {
@@ -5286,9 +5855,9 @@ export default function App() {
                     <ScrollView testID="theme-picker-scroll" showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 18 }}>
                       {[
                         ["Current", sanctuaryThemesByUnlock().filter((theme) => theme.key === sanctuaryTheme)],
-                        ["Available", sanctuaryThemesByUnlock().filter((theme) => theme.key !== sanctuaryTheme && isThemeUnlocked(theme, totalReflectionDays, premium))],
-                        ["Growing", sanctuaryThemesByUnlock().filter((theme) => theme.unlockType === "reflections" && !isThemeUnlocked(theme, totalReflectionDays, premium)).slice(0, 2)],
-                        ["Locked", sanctuaryThemesByUnlock().filter((theme) => theme.unlockType === "reflections" && !isThemeUnlocked(theme, totalReflectionDays, premium)).slice(2)],
+                        ["Available", sanctuaryThemesByUnlock().filter((theme) => theme.key !== sanctuaryTheme && isThemeUnlocked(theme, totalReflectionDays, effectivePremium))],
+                        ["Growing", sanctuaryThemesByUnlock().filter((theme) => theme.unlockType === "reflections" && !isThemeUnlocked(theme, totalReflectionDays, effectivePremium)).slice(0, 2)],
+                        ["Locked", sanctuaryThemesByUnlock().filter((theme) => theme.unlockType === "reflections" && !isThemeUnlocked(theme, totalReflectionDays, effectivePremium)).slice(2)],
                         ["Seasonal", sanctuaryThemesByUnlock().filter((theme) => theme.unlockType === "seasonal")],
                       ].map(([label, rawThemes]) => {
                         const themes = rawThemes as typeof SANCTUARY_THEMES;
@@ -5298,7 +5867,7 @@ export default function App() {
                             <Text style={[styles.youSectionTitle, themedAccent2]}>{label as string}</Text>
                             <View style={styles.themePickerGrid}>
                               {themes.map((theme) => {
-                                const unlocked = isThemeUnlocked(theme, totalReflectionDays, premium);
+                                const unlocked = isThemeUnlocked(theme, totalReflectionDays, effectivePremium);
                                 return (
                                   <Pressable
                                     key={theme.key}
@@ -5319,7 +5888,7 @@ export default function App() {
                                       <ThemeIcon type={theme.key} color={theme.accent} size={22} />
                                       <Text style={styles.themePickerTileTitle}>{theme.label}</Text>
                                       <Text style={styles.themePickerTileSub} numberOfLines={1}>
-                                        {unlocked ? theme.feeling : themeProgressLabel(theme, totalReflectionDays, premium)}
+                                        {unlocked ? theme.feeling : themeProgressLabel(theme, totalReflectionDays, effectivePremium)}
                                       </Text>
                                       <View style={styles.themePickerActions}>
                                         <Pressable
@@ -5418,25 +5987,25 @@ export default function App() {
                           </View>
                           <Pressable
                             onPress={() => {
-                              if (!isThemeUnlocked(selected, totalReflectionDays, premium)) return;
+                              if (!isThemeUnlocked(selected, totalReflectionDays, effectivePremium)) return;
                               setSanctuaryTheme(selected.key);
                               setDraftSanctuaryTheme(selected.key);
                               setShowThemePreview(false);
                               setShowThemePicker(false);
                             }}
-                            disabled={sanctuaryTheme === selected.key || !isThemeUnlocked(selected, totalReflectionDays, premium)}
+                            disabled={sanctuaryTheme === selected.key || !isThemeUnlocked(selected, totalReflectionDays, effectivePremium)}
                             style={[
                               styles.themeApplyButton,
                               { backgroundColor: appTheme.button },
-                              (sanctuaryTheme === selected.key || !isThemeUnlocked(selected, totalReflectionDays, premium)) && styles.themeApplyButtonDisabled,
+                              (sanctuaryTheme === selected.key || !isThemeUnlocked(selected, totalReflectionDays, effectivePremium)) && styles.themeApplyButtonDisabled,
                             ]}
                           >
                             <Text style={[styles.themeApplyButtonText, themedTitle]}>
                               {sanctuaryTheme === selected.key
                                 ? "Theme applied"
-                                : isThemeUnlocked(selected, totalReflectionDays, premium)
+                                : isThemeUnlocked(selected, totalReflectionDays, effectivePremium)
                                   ? "Select Theme"
-                                  : themeProgressLabel(selected, totalReflectionDays, premium)}
+                                  : themeProgressLabel(selected, totalReflectionDays, effectivePremium)}
                             </Text>
                           </Pressable>
                         </View>
@@ -5449,10 +6018,13 @@ export default function App() {
               <View style={[styles.youCard, themedCard]}>
                 <Text style={[styles.youSectionTitle, themedAccent2]}>Privacy</Text>
                 <Text style={[styles.youCardBody, themedBody]}>
-                  {authUser
-                    ? "Your reflections are associated with your account and used only to provide Tranqly features."
-                    : "Your reflections stay on this device unless you choose to sign in and sync them."}
+                  Saved reflections stay on this device. Reflection text or audio is sent securely to Tranqly only when you request transcription or an insight.
                 </Text>
+                {complimentaryAccess?.status === "active" ? (
+                  <Text style={[styles.youCardMuted, themedMuted]}>
+                    First week active until {new Date(complimentaryAccess.endsAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}.
+                  </Text>
+                ) : null}
               </View>
 
               <View style={[styles.youCard, themedCard]}>
@@ -5515,6 +6087,14 @@ export default function App() {
                     {hasDemoData ? "Remove demo data" : "Add demo data"}
                   </Text>
                 </Pressable>
+                <Pressable
+                  style={[styles.dataControlButton, themedInk]}
+                  onPress={hasFirstWeekTrialDemo ? removeDemoData : addFirstWeekTrialDemo}
+                >
+                  <Text style={[styles.dataControlText, themedBody]}>
+                    {hasFirstWeekTrialDemo ? "Remove Day 7 trial demo" : "Simulate Day 7 trial ending"}
+                  </Text>
+                </Pressable>
                 </> : null}
                 <Pressable style={[styles.dataControlButton, themedInk]} onPress={() => void Share.share({ message: JSON.stringify({ exportedAt: new Date().toISOString(), reflections: checkIns, weeklyReflections: weeklyInsights }, null, 2), title: "Tranqly data export" })}>
                   <Text style={[styles.dataControlText, themedBody]}>Export My Data</Text>
@@ -5529,16 +6109,21 @@ export default function App() {
                   style={[styles.dataControlButton, themedInk]}
                   onPress={() => {
                     setOnboardingName(displayName);
-                    setOnboardingCompleted(true);
-                    setOnboardingStep("intro");
+                    setOnboardingCompleted(false);
+                    setOnboardingStatus("not_started");
+                    setCurrentOnboardingStep("firstWeek");
                     setOnboardingCoachCompleted(false);
-                    setOnboardingCoachStep("mic");
+                    setOnboardingCoachStep(null);
+                    setReflectionCoachMarkSeen(false);
+                    setJourneyCoachMarkSeen(false);
+                    setSanctuaryCoachMarkSeen(false);
                     setOnboardingSkippedAt(null);
                     setOnboardingCoachCompletedAt(null);
+                    setComplimentaryAccess(null);
                     setTab("coach");
                   }}
                 >
-                  <Text style={[styles.dataControlText, themedBody]}>Replay onboarding walkthrough</Text>
+                  <Text style={[styles.dataControlText, themedBody]}>Restart onboarding</Text>
                 </Pressable>
                 <Pressable
                   style={styles.dangerButton}
@@ -5596,6 +6181,7 @@ export default function App() {
               </View>
             </ScrollView>
           ) : null}
+          </Animated.View>
         </KeyboardAvoidingView>
 
           <View style={[styles.tabs, { backgroundColor: appTheme.ink, borderColor: appTheme.edge }]}>
@@ -5604,12 +6190,19 @@ export default function App() {
               return (
                 <Pressable
                   key={key}
+                  ref={key === "journey" ? journeyCoachTargetRef : key === "you" ? sanctuaryCoachTargetRef : undefined}
+                  onLayout={measureCoachTarget}
                   testID={`tab-${key}`}
                   accessibilityRole="tab"
                   accessibilityState={{ selected: active }}
                   accessibilityLabel={label}
-                  onPress={() => setTab(key)}
-                  style={[styles.tab, active && { backgroundColor: appTheme.button }]}
+                  onPress={() => pressBottomTab(key)}
+                  style={({ pressed }) => [
+                    styles.tab,
+                    active && styles.tabActiveLift,
+                    active && { backgroundColor: appTheme.button },
+                    pressed && styles.tabPressed,
+                  ]}
                 >
                   {key === "you" ? (
                     <View
@@ -5797,7 +6390,7 @@ export default function App() {
                     <TextInput value={responseFeedbackText} onChangeText={setResponseFeedbackText} placeholder="Tell us more (optional)" placeholderTextColor={appTheme.faint} style={[styles.youInput, themedCard, themedTitle, { marginTop: 10 }]} />
                   </View>
                 ) : null}
-                <ScrollView testID="weekly-reflection-modal-scroll" showsVerticalScrollIndicator={false}>
+                <ScrollView testID="weekly-reflection-modal-scroll" showsVerticalScrollIndicator={false} contentContainerStyle={styles.weeklyHistoryScroll}>
                   {selectedWeeklyInsight ? (
                     <View style={[styles.authSummaryCard, themedInk]}>
                       <Text style={[styles.authSummaryLabel, themedMuted]}>
@@ -5806,7 +6399,7 @@ export default function App() {
                       <Text style={[styles.deepHeadline, themedTitle]}>{selectedWeeklyInsight.headline}</Text>
                       <Text style={[styles.journeyCardText, themedBody]}>{selectedWeeklyInsight.insight}</Text>
                       <View style={[styles.authSummaryCard, { backgroundColor: appTheme.helperBg, borderColor: appTheme.helperEdge, marginTop: 10 }]}>
-                        <Text style={[styles.authSummaryLabel, themedAccent2]}>This week's experiment</Text>
+                        <Text style={[styles.authSummaryLabel, themedAccent2]}>Next Gentle Focus</Text>
                         <Text style={[styles.youCardMuted, themedBody]}>{selectedWeeklyInsight.suggestion}</Text>
                       </View>
                     </View>
@@ -5888,7 +6481,7 @@ export default function App() {
                       ) : null}
                       {sanctuaryTheme !== detailSanctuary.key ? (
                         <Text style={[styles.sanctuaryMetaPill, themedMuted]}>
-                          {themeProgressLabel(detailSanctuary, totalReflectionDays, premium)}
+                          {themeProgressLabel(detailSanctuary, totalReflectionDays, effectivePremium)}
                         </Text>
                       ) : null}
                       <Text style={[styles.sanctuaryMetaPill, themedMuted]}>
@@ -5938,7 +6531,7 @@ export default function App() {
                     </Text>
                   </View>
 
-                  {isThemeUnlocked(detailSanctuary, totalReflectionDays, premium) && sanctuaryTheme !== detailSanctuary.key ? (
+                  {isThemeUnlocked(detailSanctuary, totalReflectionDays, effectivePremium) && sanctuaryTheme !== detailSanctuary.key ? (
                     <Pressable
                       style={[styles.themeApplyButton, { backgroundColor: appTheme.button, marginBottom: 18 }]}
                       onPress={() => {
@@ -5953,6 +6546,157 @@ export default function App() {
                 </ScrollView>
               </View>
             </View>
+          </Modal>
+
+          <Modal
+            visible={showFirstWeekCompleteModal}
+            transparent
+            animationType="fade"
+            onRequestClose={markFirstWeekConversionSeen}
+          >
+            <Pressable style={styles.firstWeekSheetOverlay} onPress={markFirstWeekConversionSeen}>
+              <Pressable
+                style={[styles.firstWeekSheet, themedCard]}
+                onPress={() => {}}
+              >
+                <View style={styles.firstWeekSheetHeader}>
+                  <View style={styles.modalHandle} />
+                <View style={[styles.premiumHeaderRow, { marginBottom: 0 }]}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.authSummaryLabel, themedAccent2]}>Day 7</Text>
+                    <Text style={[styles.premiumModalTitle, themedTitle]}>Your first week is complete.</Text>
+                  </View>
+                  <Pressable
+                    accessibilityLabel="Close first week summary"
+                    onPress={markFirstWeekConversionSeen}
+                    style={[styles.coachMarkCloseButton, { borderColor: appTheme.edge, backgroundColor: appTheme.ink }]}
+                  >
+                    <Text style={[styles.coachMarkCloseText, themedMuted]}>x</Text>
+                  </Pressable>
+                </View>
+                </View>
+                <ScrollView
+                  showsVerticalScrollIndicator={false}
+                  contentContainerStyle={styles.firstWeekSheetScroll}
+                >
+                <View style={styles.weeklySummaryGrid}>
+                  {firstWeekSummaryItems.map((item) => (
+                    <View key={item} style={[styles.weeklySummaryPill, { borderColor: appTheme.edge, backgroundColor: appTheme.ink }]}>
+                      <Text style={[styles.weeklySummaryText, themedMuted]}>{item}</Text>
+                    </View>
+                  ))}
+                </View>
+                {firstWeekReflectionDays > 0 && firstWeekReflectionDays < 7 ? (
+                  <View style={[styles.weeklyProgressMessage, { borderColor: appTheme.edge, backgroundColor: appTheme.ink }]}>
+                    <Text style={[styles.weeklyModalBody, themedBody]}>
+                      You made meaningful space for yourself throughout the week.
+                    </Text>
+                  </View>
+                ) : null}
+                <View style={[styles.weeklyDetailCard, themedInk]}>
+                  <Text style={[styles.authSummaryLabel, themedAccent2]}>Weekly Reflection</Text>
+                  <Text style={[styles.weeklyModalTitle, themedTitle]}>
+                    {firstWeekInsight?.headline ?? "A few moments from your week"}
+                  </Text>
+                  <Text style={[styles.weeklyModalBody, themedBody]}>
+                    {firstWeekReflectionText}
+                  </Text>
+                  <View style={[styles.weeklyExperimentBox, { borderColor: appTheme.helperEdge, backgroundColor: appTheme.helperBg }]}>
+                    <Text style={[styles.authSummaryLabel, themedAccent2]}>{firstWeekInsight?.gentleFocusTitle ?? "Next gentle focus"}</Text>
+                    <Text style={[styles.weeklyModalBody, themedTitle]}>
+                      {firstWeekInsight?.suggestion ?? "Notice one moment this week where you feel a little more settled, supported, or clear."}
+                    </Text>
+                  </View>
+                </View>
+                {firstWeekReflectionDays >= 7 ? (
+                  <View style={[styles.weeklyRewardCard, { borderColor: appTheme.helperEdge, backgroundColor: appTheme.helperBg }]}>
+                    <Image source={forestHavenReward.artwork} style={styles.weeklyRewardImage} />
+                    <View style={styles.weeklyRewardCopy}>
+                      <Text style={[styles.authSummaryLabel, themedAccent2]}>Seven days of reflection</Text>
+                      <Text style={[styles.weeklyModalTitle, themedTitle]}>Forest Haven unlocked</Text>
+                      <Text style={[styles.weeklyModalBody, themedBody]}>
+                        You made space for yourself every day this week. Forest Haven is now available in your sanctuary collection.
+                      </Text>
+                    </View>
+                  </View>
+                ) : null}
+                <Text style={[styles.firstWeekContinueTitle, themedTitle]}>
+                  Continue your journey
+                </Text>
+                <Text style={[styles.premiumPriceNote, themedMuted]}>
+                  Keep receiving thoughtful responses, weekly reflections, and insights that build on what you share.
+                </Text>
+                <Text style={[styles.premiumPriceNote, themedMuted]}>
+                  Your first week and existing reflections will remain yours whether you continue or not.
+                </Text>
+                <View style={styles.premiumPlanGrid}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: selectedPlan === "monthly" }}
+                    onPress={() => setSelectedPlan("monthly")}
+                    style={[
+                      styles.premiumPlanCard,
+                      { borderColor: selectedPlan === "monthly" ? appTheme.accent : appTheme.edge },
+                      selectedPlan === "monthly" && { backgroundColor: appTheme.helperBg },
+                    ]}
+                  >
+                    <Text style={[styles.premiumPlanName, themedTitle]}>Monthly</Text>
+                    <Text style={[styles.premiumPlanPrice, themedTitle]}>$5.99 per month</Text>
+                    <Text style={[styles.premiumPlanDetail, themedMuted]}>Billed monthly</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: selectedPlan === "yearly" }}
+                    onPress={() => setSelectedPlan("yearly")}
+                    style={[
+                      styles.premiumPlanCard,
+                      { borderColor: selectedPlan === "yearly" ? appTheme.accent : appTheme.edge },
+                      selectedPlan === "yearly" && { backgroundColor: appTheme.helperBg },
+                    ]}
+                  >
+                    <View style={styles.premiumPlanHeader}>
+                      <Text style={[styles.premiumPlanName, themedTitle]}>Yearly</Text>
+                      <Text style={[styles.premiumPlanBadge, { color: appTheme.accent2 }]}>BEST VALUE</Text>
+                    </View>
+                    <Text style={[styles.premiumPlanPrice, themedTitle]}>$59.99 per year</Text>
+                    <Text style={[styles.premiumPlanDetail, themedMuted]}>About $5 per month</Text>
+                  </Pressable>
+                </View>
+                </ScrollView>
+                <View style={[styles.firstWeekPurchaseFooter, { borderColor: appTheme.edge, backgroundColor: appTheme.card }]}>
+                <View style={[styles.firstWeekSelectedPlan, { borderColor: appTheme.edge, backgroundColor: appTheme.ink }]}>
+                  <Text style={[styles.firstWeekSelectedPlanTitle, themedTitle]}>{firstWeekPlanLabel}</Text>
+                  <Text style={[styles.firstWeekSelectedPlanDetail, themedMuted]}>{firstWeekPlanBilling}</Text>
+                </View>
+                <Pressable onPress={() => { markFirstWeekConversionSeen(); void startCheckout(); }} disabled={checkoutBusy} style={styles.premiumUpgradeButton}>
+                  <LinearGradient
+                    colors={[appTheme.button, appTheme.button]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={styles.premiumUpgradeGradient}
+                  >
+                    <Text style={[styles.premiumUpgradeText, themedTitle]}>
+                      {checkoutBusy ? "Opening checkout..." : "Begin Week Two"}
+                    </Text>
+                  </LinearGradient>
+                </Pressable>
+                <Pressable onPress={markFirstWeekConversionSeen} style={styles.premiumCloseButton}>
+                  <Text style={[styles.premiumCloseText, themedMuted]}>Not now</Text>
+                </Pressable>
+                <Pressable onPress={() => void restoreAppStorePurchases()} disabled={checkoutBusy} style={styles.premiumCloseButton}>
+                  <Text style={[styles.premiumCloseText, themedAccent]}>Restore purchases</Text>
+                </Pressable>
+                <View style={{ flexDirection: "row", justifyContent: "center", gap: 24 }}>
+                  <Pressable onPress={() => void Linking.openURL("https://tranqly.app/terms")}>
+                    <Text style={[styles.premiumPriceNote, themedMuted]}>Terms</Text>
+                  </Pressable>
+                  <Pressable onPress={() => void Linking.openURL("https://tranqly.app/privacy")}>
+                    <Text style={[styles.premiumPriceNote, themedMuted]}>Privacy</Text>
+                  </Pressable>
+                </View>
+                </View>
+              </Pressable>
+            </Pressable>
           </Modal>
 
           <Modal
@@ -5974,18 +6718,18 @@ export default function App() {
                   <ThemeIcon type="blossom" color={appTheme.accent2} size={28} />
                 </View>
                 <Text style={[styles.premiumModalTitle, themedTitle]}>
-                  Tranqly Plus
+                  Ready for another week?
                 </Text>
                 <Text style={[styles.premiumModalBody, themedBody]}>
-                  Go deeper with every reflection.
+                  Your first week is yours to keep, whether you continue or not.
                   {"\n\n"}
-                  Plus unlocks unlimited AI insights, weekly reflection summaries, exclusive sanctuary themes, and more personalized guidance over time.
+                  Your first week helped uncover meaningful patterns. Continue whenever it feels right.
                 </Text>
                 {[
-                  "Unlimited AI insights",
-                  "Weekly reflection summaries",
-                  "Exclusive sanctuary themes",
-                  "More personalized guidance over time",
+                  "Another week of thoughtful responses",
+                  "Weekly reflections that build on what you share",
+                  "More sanctuaries to explore",
+                  "More personal guidance over time",
                 ].map((item) => (
                   <View key={item} style={styles.premiumPerkRow}>
                     <View style={[styles.premiumPerkIcon, { borderColor: appTheme.helperEdge }]}>
@@ -5994,6 +6738,35 @@ export default function App() {
                     <Text style={styles.premiumPerkText}>{item}</Text>
                   </View>
                 ))}
+                <View style={styles.premiumPlanGrid}>
+                  <Pressable
+                    onPress={() => setSelectedPlan("yearly")}
+                    style={[
+                      styles.premiumPlanCard,
+                      { borderColor: selectedPlan === "yearly" ? appTheme.accent : appTheme.edge },
+                      selectedPlan === "yearly" && { backgroundColor: appTheme.helperBg },
+                    ]}
+                  >
+                    <View style={styles.premiumPlanHeader}>
+                      <Text style={[styles.premiumPlanName, themedTitle]}>Yearly</Text>
+                      <Text style={[styles.premiumPlanBadge, { color: appTheme.accent2 }]}>BEST VALUE</Text>
+                    </View>
+                    <Text style={[styles.premiumPlanPrice, themedTitle]}>$59.99 per year</Text>
+                    <Text style={[styles.premiumPlanDetail, themedMuted]}>About $5 per month</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => setSelectedPlan("monthly")}
+                    style={[
+                      styles.premiumPlanCard,
+                      { borderColor: selectedPlan === "monthly" ? appTheme.accent : appTheme.edge },
+                      selectedPlan === "monthly" && { backgroundColor: appTheme.helperBg },
+                    ]}
+                  >
+                    <Text style={[styles.premiumPlanName, themedTitle]}>Monthly</Text>
+                    <Text style={[styles.premiumPlanPrice, themedTitle]}>$5.99 per month</Text>
+                    <Text style={[styles.premiumPlanDetail, themedMuted]}>Billed monthly</Text>
+                  </Pressable>
+                </View>
                 <Pressable
                   onPress={startCheckout}
                   disabled={checkoutBusy}
@@ -6006,17 +6779,34 @@ export default function App() {
                     style={styles.premiumUpgradeGradient}
                   >
                     <Text style={[styles.premiumUpgradeText, themedTitle]}>
-                      {checkoutBusy ? "Opening checkout..." : "Start Plus \u2022 $5.99/mo"}
+                      {checkoutBusy ? "Opening checkout..." : "Begin Week Two"}
                     </Text>
                   </LinearGradient>
                 </Pressable>
-                <Text style={[styles.premiumPriceNote, themedMuted]}>Yearly option: $59.99/year</Text>
+                <Text style={[styles.premiumPriceNote, themedMuted]}>
+                  Billing starts only after you confirm a paid plan. Your saved reflections and first weekly reflection remain available if you do not continue.
+                </Text>
                 <Pressable
                   onPress={() => setShowPremiumModal(false)}
                   style={styles.premiumCloseButton}
                 >
-                  <Text style={[styles.premiumCloseText, themedMuted]}>Not today, and that's okay</Text>
+                  <Text style={[styles.premiumCloseText, themedMuted]}>Not right now</Text>
                 </Pressable>
+                <Pressable
+                  onPress={() => void restoreAppStorePurchases()}
+                  disabled={checkoutBusy}
+                  style={styles.premiumCloseButton}
+                >
+                  <Text style={[styles.premiumCloseText, themedAccent]}>Restore purchases</Text>
+                </Pressable>
+                <View style={{ flexDirection: "row", justifyContent: "center", gap: 24 }}>
+                  <Pressable onPress={() => void Linking.openURL("https://tranqly.app/terms")}>
+                    <Text style={[styles.premiumPriceNote, themedMuted]}>Terms</Text>
+                  </Pressable>
+                  <Pressable onPress={() => void Linking.openURL("https://tranqly.app/privacy")}>
+                    <Text style={[styles.premiumPriceNote, themedMuted]}>Privacy</Text>
+                  </Pressable>
+                </View>
               </Pressable>
             </Pressable>
           </Modal>
@@ -6028,6 +6818,10 @@ export default function App() {
     if (recording) {
       await stopRecording(recording);
     } else {
+      if (needsWeekTwo) {
+        promptWeekTwoContinuation();
+        return;
+      }
       try {
         const perm = await Audio.requestPermissionsAsync();
         if (!perm.granted) {
@@ -9069,17 +9863,67 @@ const styles = StyleSheet.create({
   },
   onboardingCard: {
     width: "100%",
-    maxWidth: 390,
-    borderRadius: 28,
-    borderWidth: 1,
     padding: 22,
     alignItems: "center",
     gap: 14,
   },
+  onboardingCardShell: {
+    width: "100%",
+    maxWidth: 390,
+    borderRadius: 28,
+    borderWidth: 1,
+    overflow: "hidden",
+    paddingHorizontal: 18,
+    paddingTop: 16,
+    paddingBottom: 16,
+  },
+  onboardingHeader: {
+    alignItems: "center",
+    gap: 8,
+  },
+  onboardingStepText: {
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 2.2,
+    textTransform: "uppercase",
+  },
+  onboardingProgressRow: {
+    flexDirection: "row",
+    gap: 6,
+  },
+  onboardingProgressSegment: {
+    width: 28,
+    height: 6,
+    borderRadius: 999,
+  },
+  onboardingMiddle: {
+    flex: 1,
+    width: "100%",
+    marginTop: 10,
+  },
+  onboardingMiddleContent: {
+    flexGrow: 1,
+    justifyContent: "flex-start",
+    gap: 8,
+    paddingVertical: 4,
+  },
+  onboardingFooter: {
+    width: "100%",
+    borderTopWidth: 1,
+    paddingTop: 12,
+    gap: 7,
+  },
+  onboardingCardScroll: {
+    width: "100%",
+    maxWidth: 390,
+    maxHeight: "72%",
+    borderRadius: 28,
+    borderWidth: 1,
+  },
   onboardingLotus: {
-    width: 78,
-    height: 78,
-    borderRadius: 39,
+    width: 66,
+    height: 66,
+    borderRadius: 33,
     borderWidth: 1.5,
     alignItems: "center",
     justifyContent: "center",
@@ -9087,15 +9931,19 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.45,
     shadowRadius: 24,
   },
+  onboardingLogoImage: {
+    width: 52,
+    height: 52,
+  },
   onboardingTitle: {
-    fontSize: 25,
+    fontSize: 23,
     fontWeight: "900",
     letterSpacing: -0.7,
     textAlign: "center",
   },
   onboardingBody: {
-    fontSize: 15,
-    lineHeight: 22,
+    fontSize: 14,
+    lineHeight: 20,
     textAlign: "center",
   },
   onboardingButton: {
@@ -9317,6 +10165,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#263142",
   },
+  tabContentTransition: {
+    flex: 1,
+  },
   tab: {
     flex: 1,
     alignItems: "center",
@@ -9325,6 +10176,17 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 8,
     borderRadius: 22,
+  },
+  tabActiveLift: {
+    transform: [{ translateY: -1 }],
+    shadowColor: "#000",
+    shadowOpacity: 0.16,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  tabPressed: {
+    transform: [{ scale: 0.96 }],
+    opacity: 0.9,
   },
   tabActive: {
     backgroundColor: "#F8EFE3",
@@ -9343,6 +10205,35 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
     paddingBottom: 40,
     paddingHorizontal: 16,
+  },
+  firstWeekSheetOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.7)",
+    justifyContent: "flex-end",
+  },
+  firstWeekSheet: {
+    maxHeight: "94%",
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    borderWidth: 1,
+    overflow: "hidden",
+  },
+  firstWeekSheetHeader: {
+    paddingHorizontal: 18,
+    paddingTop: 12,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255,255,255,0.10)",
+  },
+  firstWeekSheetScroll: {
+    padding: 18,
+    paddingBottom: 28,
+  },
+  firstWeekPurchaseFooter: {
+    borderTopWidth: 1,
+    paddingHorizontal: 18,
+    paddingTop: 12,
+    paddingBottom: Platform.OS === "ios" ? 30 : 16,
   },
   modalCard: {
     backgroundColor: "#151A24",
@@ -9398,6 +10289,104 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 8,
     marginBottom: 18,
+  },
+  premiumHeaderRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    marginBottom: 14,
+  },
+  weeklyDetailCard: {
+    borderRadius: 20,
+    borderWidth: 1,
+    padding: 14,
+  },
+  weeklySummaryGrid: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 12,
+  },
+  weeklySummaryPill: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  weeklySummaryText: {
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  weeklyModalTitle: {
+    marginTop: 8,
+    fontSize: 20,
+    lineHeight: 24,
+    fontWeight: "900",
+  },
+  weeklyModalBody: {
+    marginTop: 8,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: "700",
+  },
+  weeklyExperimentBox: {
+    marginTop: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 12,
+  },
+  weeklyRewardCard: {
+    marginTop: 12,
+    borderRadius: 20,
+    borderWidth: 1,
+    padding: 14,
+    flexDirection: "row",
+    gap: 12,
+    alignItems: "center",
+  },
+  weeklyRewardImage: {
+    width: 74,
+    height: 74,
+    borderRadius: 18,
+  },
+  weeklyRewardCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  firstWeekContinueTitle: {
+    marginTop: 18,
+    fontSize: 22,
+    lineHeight: 27,
+    fontWeight: "900",
+  },
+  firstWeekSelectedPlan: {
+    borderWidth: 1,
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  firstWeekSelectedPlanTitle: {
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  firstWeekSelectedPlanDetail: {
+    marginTop: 2,
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  weeklyProgressMessage: {
+    marginBottom: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  weeklyHistoryScroll: {
+    paddingBottom: Platform.OS === "ios" ? 34 : 20,
   },
   premiumPerkRow: {
     flexDirection: "row",
@@ -9545,6 +10534,117 @@ const styles = StyleSheet.create({
     borderColor: "#263142",
     marginBottom: 10,
   },
+  onboardingTimelineItem: {
+    width: "100%",
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  onboardingTimelineTitle: {
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  onboardingTimelineBody: {
+    marginTop: 3,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  onboardingSecondaryButton: {
+    minHeight: 44,
+    width: "100%",
+    borderRadius: 16,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 2,
+  },
+  onboardingBillingNote: {
+    fontSize: 11,
+    lineHeight: 16,
+    textAlign: "center",
+  },
+  onboardingDivider: {
+    width: 84,
+    height: 1,
+    alignSelf: "center",
+    opacity: 0.55,
+  },
+  onboardingNameField: {
+    width: "100%",
+    alignSelf: "center",
+    marginTop: 8,
+  },
+  onboardingInputLabel: {
+    marginBottom: 6,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  onboardingInput: {
+    width: "100%",
+    minHeight: 50,
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    fontSize: 16,
+    textAlign: "left",
+  },
+  onboardingTrialItem: {
+    width: "100%",
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  onboardingTrialBody: {
+    marginTop: 2,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  onboardingTrialTitle: {
+    marginTop: 2,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  premiumPlanGrid: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 8,
+    marginBottom: 6,
+  },
+  premiumPlanCard: {
+    flex: 1,
+    minHeight: 88,
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 12,
+    justifyContent: "center",
+  },
+  premiumPlanHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 4,
+  },
+  premiumPlanName: {
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  premiumPlanBadge: {
+    fontSize: 8,
+    fontWeight: "900",
+    letterSpacing: 0.7,
+  },
+  premiumPlanPrice: {
+    marginTop: 5,
+    fontSize: 13,
+    fontWeight: "900",
+  },
+  premiumPlanDetail: {
+    marginTop: 2,
+    fontSize: 10,
+    fontWeight: "700",
+  },
   date: {
     color: "#7E8B9D",
     fontSize: 11,
@@ -9561,26 +10661,43 @@ const styles = StyleSheet.create({
   },
   coachMarkOverlay: {
     flex: 1,
-    justifyContent: "flex-end",
-    paddingHorizontal: 18,
-    paddingBottom: 118,
     backgroundColor: "rgba(0,0,0,0.34)",
   },
+  coachMarkOverlayMic: {
+    justifyContent: "flex-start",
+    paddingTop: 170,
+    paddingBottom: 24,
+  },
   coachMarkCard: {
-    borderRadius: 26,
+    position: "absolute",
+    left: 18,
+    right: 18,
+    borderRadius: 20,
     borderWidth: 1,
-    padding: 16,
+    padding: 12,
     shadowColor: "#000",
     shadowOpacity: 0.26,
     shadowRadius: 24,
     shadowOffset: { width: 0, height: 12 },
     elevation: 12,
   },
+  coachMarkHighlight: {
+    position: "absolute",
+    borderWidth: 2,
+    shadowOpacity: 0.8,
+    shadowRadius: 22,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 15,
+  },
   coachMarkHeader: {
     flexDirection: "row",
     alignItems: "flex-start",
     justifyContent: "space-between",
-    gap: 12,
+    gap: 8,
+  },
+  coachMarkHeadingCopy: {
+    flex: 1,
+    paddingRight: 8,
   },
   coachMarkKicker: {
     fontSize: 10,
@@ -9589,49 +10706,49 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
   },
   coachMarkTitle: {
-    marginTop: 4,
-    fontSize: 22,
+    marginTop: 3,
+    fontSize: 18,
     fontWeight: "900",
   },
-  coachMarkClose: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+  coachMarkTopActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  coachMarkCloseButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
   },
   coachMarkCloseText: {
-    fontSize: 16,
+    fontSize: 12,
     fontWeight: "900",
   },
   coachMarkBody: {
-    marginTop: 10,
-    fontSize: 14,
-    lineHeight: 20,
+    marginTop: 8,
+    fontSize: 13,
+    lineHeight: 18,
   },
-  coachMarkMetaRow: {
-    marginTop: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  coachMarkProgress: {
-    fontSize: 12,
-    fontWeight: "800",
-  },
-  coachMarkSkipText: {
-    fontSize: 12,
-    fontWeight: "800",
+  coachMarkProgressBadge: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    fontSize: 10,
+    fontWeight: "900",
   },
   coachMarkActions: {
     flexDirection: "row",
     gap: 10,
-    marginTop: 10,
+    marginTop: 8,
   },
   coachMarkPrimary: {
     flex: 1,
-    minHeight: 44,
+    minHeight: 42,
     borderRadius: 18,
     alignItems: "center",
     justifyContent: "center",
@@ -9639,5 +10756,59 @@ const styles = StyleSheet.create({
   coachMarkPrimaryText: {
     fontSize: 14,
     fontWeight: "900",
+  },
+  onboardingCompleteCard: {
+    position: "absolute",
+    left: 28,
+    right: 28,
+    top: "31%",
+    borderRadius: 24,
+    borderWidth: 1,
+    padding: 20,
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.28,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 14,
+  },
+  onboardingCompleteTitle: {
+    fontSize: 24,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  onboardingCompleteBody: {
+    marginTop: 10,
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: "center",
+  },
+  onboardingCompleteButton: {
+    marginTop: 18,
+    minHeight: 46,
+    width: "100%",
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  firstWeekBanner: {
+    borderRadius: 18,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    marginTop: -2,
+    marginBottom: 2,
+  },
+  firstWeekBannerStrong: {
+    fontSize: 11,
+    fontWeight: "900",
+    textTransform: "uppercase",
+    letterSpacing: 1.1,
+  },
+  firstWeekBannerText: {
+    marginTop: 2,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "700",
   },
 });

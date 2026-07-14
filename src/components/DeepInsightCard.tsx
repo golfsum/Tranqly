@@ -30,6 +30,8 @@ export default function DeepInsightCard({
     }
     setLoading(true);
     const streak = currentStreak(checkIns);
+    const recentEntries = checkIns.slice(0, 40);
+    const reflectionDays = new Set(recentEntries.map((entry) => entry.dateKey)).size;
 
     try {
       const res = await fetch("/api/analyze", {
@@ -40,9 +42,12 @@ export default function DeepInsightCard({
           userPlan: premium ? "plus" : "free",
           streak,
           totalEntries: checkIns.length,
-          recentEntries: checkIns.slice(0, 40).map((c) => ({
+          reflectionDays,
+          recentEntries: recentEntries.map((c) => ({
             text: c.text,
             dateKey: c.dateKey,
+            prompt: c.prompt,
+            dailyInsight: c.reply?.preview ?? c.reply?.summary ?? c.reply?.message,
           })),
           recentMoods: Object.entries(moods)
             .sort((a, b) => b[0].localeCompare(a[0]))

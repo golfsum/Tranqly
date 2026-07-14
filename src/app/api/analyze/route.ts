@@ -13,8 +13,15 @@ interface AnalyzePayload {
   name?: string;
   streak: number;
   totalEntries: number;
-  recentEntries: { text: string; dateKey: string }[];
+  recentEntries: { text: string; dateKey: string; prompt?: string; dailyInsight?: string }[];
   recentMoods: { dateKey: string; mood: string }[];
+  periodStart?: string;
+  periodEnd?: string;
+  reflectionDays?: number;
+  previousWeeklyThemes?: string[];
+  responseStylePreference?: string;
+  reflectionGoal?: string;
+  memoryEnabled?: boolean;
   userId?: string;
   userPlan?: "free" | "plus";
 }
@@ -24,12 +31,12 @@ const INSIGHT_SCHEMA = {
   properties: {
     headline: {
       type: "string",
-      description: "Gentle, uplifting 4-8 word headline about their pattern",
+      description: "Short personalized weekly reflection title",
     },
     insight: {
       type: "string",
       description:
-        "3-4 sentences of warm pattern-level observation across their reflections and moods. Reference specific entries. Find the thread they might not see themselves.",
+        "Two to four short paragraphs that connect the week with evidence-aware language",
     },
     suggestion: {
       type: "string",
@@ -41,6 +48,13 @@ const INSIGHT_SCHEMA = {
       description: "One sentence of genuine, non-cheesy encouragement",
     },
     pattern: { type: "string" },
+    gentleFocusTitle: { type: "string" },
+    evidenceLevel: { type: "string", enum: ["limited", "emerging", "meaningful", "strong"] },
+    completionMessage: { type: "string" },
+    reflectionDays: { type: "number" },
+    reflectionCount: { type: "number" },
+    rewardUnlocked: { type: "boolean" },
+    rewardId: { type: "string" },
     recurring_themes: { type: "array", items: { type: "string" } },
     mood_trend: { type: "string" },
     next_focus: { type: "string" },
@@ -53,6 +67,13 @@ const INSIGHT_SCHEMA = {
     "pattern",
     "suggestion",
     "affirmation",
+    "gentleFocusTitle",
+    "evidenceLevel",
+    "completionMessage",
+    "reflectionDays",
+    "reflectionCount",
+    "rewardUnlocked",
+    "rewardId",
     "recurring_themes",
     "mood_trend",
     "next_focus",
@@ -63,14 +84,12 @@ const INSIGHT_SCHEMA = {
 } as const;
 
 const SYSTEM_PROMPT =
-  "You are Tranqly, a calm reflection companion that helps users notice patterns over time.\n\n" +
-  "Look across the user's recent reflections and moods. Surface gentle patterns the user may not see up close. " +
-  "Be honest, but never harsh. Be warm, but do not force positivity. Acknowledge effort when it is actually present. " +
-  "If something looks difficult, name it softly. Do not diagnose. Do not overclaim. Do not use clinical language. " +
-  "Do not say the user has anxiety, depression, burnout, trauma, or any mental health condition. " +
-  "Use soft language like seems, may, might, and could.\n\n" +
-  "Write like a caring friend who has been paying attention. Never use em dashes or semicolons. " +
-  "No bullet points. No emoji. Keep the response short and useful. End with one realistic next step the user can try this week.";
+  "You are Tranqly, a warm and thoughtful reflection companion.\n\n" +
+  "Create a weekly reflection from the user's reflections from the past seven-day period. Help the user feel understood, notice meaningful themes, and leave with one gentle focus for next week.\n\n" +
+  "Important rules:\n" +
+  "Never shame the user for days they did not reflect. Never call the week incomplete, failed, inconsistent, insufficient, or broken. A few honest reflections can still be meaningful. Do not invent recurring patterns when evidence is limited. Match confidence to the amount of evidence. Do not diagnose, label, or make clinical claims. Do not claim to know what the user truly feels beyond what they shared. Avoid negative or judgmental language. Do not use em dashes, semicolons, emoji, bullet points, or the phrase thanks for sharing. Refer to concrete details from the user's reflections when safe and relevant. Keep it concise enough to read comfortably on a phone.\n\n" +
+  "Language confidence rules:\n" +
+  "For 1 reflection, use language like one moment stood out, what you shared offers a glimpse, or there may not be a full pattern yet. For 2 to 3 reflection days, use language like a small thread appeared, you returned more than once to, or there may be an early pattern around. For 4 to 6 reflection days, use language like across several reflections or a recurring theme seemed to be. For 7 reflection days, you may use across your week, a clear thread appeared, or you repeatedly noticed. Do not say clear pattern unless the data strongly supports it.";
 
 export async function POST(req: NextRequest) {
   let payload: AnalyzePayload;
@@ -85,8 +104,8 @@ export async function POST(req: NextRequest) {
   }
 
   const entriesText = (payload.recentEntries ?? [])
-    .slice(0, 40)
-    .map((e) => `- [${e.dateKey}] ${e.text}`)
+    .slice(0, 14)
+    .map((e) => `[${e.dateKey}]\nPrompt: ${e.prompt || "Not recorded"}\nReflection: ${e.text}\nDaily insight: ${e.dailyInsight || "Not recorded"}`)
     .join("\n");
   const moodsText = (payload.recentMoods ?? [])
     .slice(0, 14)
@@ -94,12 +113,21 @@ export async function POST(req: NextRequest) {
     .join("\n");
 
   try {
+    const reflectionCount = payload.recentEntries?.length ?? 0;
+    const reflectionDays = payload.reflectionDays ?? new Set((payload.recentEntries ?? []).map((entry) => entry.dateKey)).size;
     const { parsed, usage } = await groqJsonChatWithUsage<{
       headline: string;
       insight: string;
       pattern: string;
       suggestion: string;
       affirmation: string;
+      gentleFocusTitle: string;
+      evidenceLevel: "limited" | "emerging" | "meaningful" | "strong";
+      completionMessage: string;
+      reflectionDays: number;
+      reflectionCount: number;
+      rewardUnlocked: boolean;
+      rewardId: string;
       recurring_themes: string[];
       mood_trend: string;
       next_focus: string;
@@ -116,11 +144,16 @@ export async function POST(req: NextRequest) {
           role: "user",
           content:
             `User: ${payload.name || "friend"}\n` +
-            `Check-in streak: ${payload.streak} day(s)\n` +
-            `Total reflections: ${payload.totalEntries}\n\n` +
-            `Recent reflections:\n${entriesText || "(none yet)"}\n\n` +
-            `Recent moods:\n${moodsText || "(none logged)"}\n\n` +
-            "Write their deeper insight for this week.",
+            `Weekly period: ${payload.periodStart || "unknown"} to ${payload.periodEnd || "unknown"}\n` +
+            `Reflection days this week: ${reflectionDays} out of 7\n` +
+            `Reflection count this week: ${reflectionCount}\n` +
+            `Total reflections: ${payload.totalEntries}\n` +
+            `Preferred support style: ${payload.responseStylePreference || "warm and direct"}\n` +
+            `Reflection goal: ${payload.reflectionGoal || "understand patterns over time"}\n\n` +
+            `Reflections:\n${entriesText || "No reflections were shared this week."}\n\n` +
+            `Moods:\n${moodsText || "None logged"}\n\n` +
+            `Previous weekly themes:\n${payload.memoryEnabled === false ? "Memory disabled" : (payload.previousWeeklyThemes ?? []).join(", ") || "None"}\n\n` +
+            "Create this user's weekly reflection. Do not treat days without reflections as a problem. If there are no reflections, do not invent patterns. Set rewardUnlocked to true only when reflectionDays is 7, otherwise false. Set rewardId to forest-haven when rewardUnlocked is true, otherwise none.",
         },
       ],
     });

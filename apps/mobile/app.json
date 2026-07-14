@@ -8,23 +8,34 @@
     "backgroundColor": "#0B0E14",
     "scheme": "tranqly",
     "icon": "./assets/icon.png",
-    "plugins": ["expo-notifications"],
-    "assetBundlePatterns": ["**/*"],
+    "plugins": [
+      "expo-notifications"
+    ],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.tranqly.app",
       "buildNumber": "1",
       "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
         "NSMicrophoneUsageDescription": "Tranqly uses the microphone to turn your spoken check-in into text.",
         "NSUserNotificationUsageDescription": "Tranqly uses notifications for gentle reflection reminders and weekly insights."
       }
     },
     "android": {
       "package": "com.tranqly.app",
-      "permissions": ["RECORD_AUDIO"]
+      "permissions": [
+        "RECORD_AUDIO"
+      ]
     },
     "extra": {
-      "apiBaseUrl": ""
-    }
+      "apiBaseUrl": "",
+      "eas": {
+        "projectId": "765b556e-d5ac-44cd-80c5-a4d3a5701a36"
+      }
+    },
+    "owner": "golf-sum"
   }
 }

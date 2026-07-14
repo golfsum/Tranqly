@@ -81,12 +81,15 @@ export default function TabBar({
         {TABS.map(({ key, label, icon }) => {
           const active = tab === key;
           return (
-            <button
+            <motion.button
               key={key}
+              data-onboarding-target={key === "journey" ? "journey" : key === "settings" ? "sanctuary" : undefined}
               onClick={() => {
-                tap();
+                if (!active) tap();
                 onChange(key);
               }}
+              whileTap={{ scale: 0.96 }}
+              transition={{ type: "spring", stiffness: 520, damping: 32 }}
               className="relative flex min-h-[56px] flex-1 flex-col items-center justify-center gap-0.5 pt-2 short-fit:min-h-[48px] short-fit:pt-1 shorter:min-h-[40px] shorter:gap-0 shorter:pt-0.5"
               aria-label={label}
             >
@@ -97,9 +100,13 @@ export default function TabBar({
                   transition={{ type: "spring", stiffness: 500, damping: 35 }}
                 />
               )}
-              <span className={active ? "text-fg [&>svg]:h-6 [&>svg]:w-6 short-fit:[&>svg]:h-5 short-fit:[&>svg]:w-5 shorter:[&>svg]:h-4 shorter:[&>svg]:w-4" : "text-faint [&>svg]:h-6 [&>svg]:w-6 short-fit:[&>svg]:h-5 short-fit:[&>svg]:w-5 shorter:[&>svg]:h-4 shorter:[&>svg]:w-4"}>
+              <motion.span
+                animate={{ y: active ? -1 : 0, scale: active ? 1.04 : 1 }}
+                transition={{ type: "spring", stiffness: 420, damping: 28 }}
+                className={active ? "text-fg [&>svg]:h-6 [&>svg]:w-6 short-fit:[&>svg]:h-5 short-fit:[&>svg]:w-5 shorter:[&>svg]:h-4 shorter:[&>svg]:w-4" : "text-faint [&>svg]:h-6 [&>svg]:w-6 short-fit:[&>svg]:h-5 short-fit:[&>svg]:w-5 shorter:[&>svg]:h-4 shorter:[&>svg]:w-4"}
+              >
                 {icon(active)}
-              </span>
+              </motion.span>
               <span
                 className={`text-[11px] font-semibold ${
                   active ? "text-fg" : "text-faint"
@@ -107,7 +114,7 @@ export default function TabBar({
               >
                 {label}
               </span>
-            </button>
+            </motion.button>
           );
         })}
       </div>

@@ -12,12 +12,14 @@ import {
   Settings,
   todayKey,
 } from "./types";
+import { hasTranqlyAccess, normalizeComplimentaryAccess } from "./access";
 import { DEFAULT_NOTIFICATION_SETTINGS } from "./notifications";
 import {
   buildDemoCheckIns,
   buildDemoCoachNotes,
   buildDemoDeepInsight,
   buildDemoMoods,
+  buildFirstWeekTrialDemo,
   isDemoCheckIn,
   isDemoNote,
 } from "./demoData";
@@ -64,6 +66,7 @@ export interface AppState {
   deleteCheckIn: (id: string) => void;
   deleteAllReflections: () => void;
   addDemoData: () => void;
+  addFirstWeekTrialDemo: () => void;
   removeDemoData: () => void;
   setMood: (mood: Mood) => void;
   updateSettings: (patch: Partial<Settings>) => void;
@@ -121,6 +124,13 @@ const defaultSettings: Settings = {
   onboardingCoachStep: null,
   onboardingSkippedAt: null,
   onboardingCompletedAt: null,
+  reflectionCoachMarkSeen: false,
+  journeyCoachMarkSeen: false,
+  sanctuaryCoachMarkSeen: false,
+  onboardingStatus: "not_started",
+  currentOnboardingStep: "firstWeek",
+  onboardingVersion: 2,
+  complimentaryAccess: null,
 };
 
 export const useApp = create<AppState>()(
@@ -217,9 +227,37 @@ export const useApp = create<AppState>()(
           };
         }),
 
+      addFirstWeekTrialDemo: () =>
+        set((s) => {
+          const demo = buildFirstWeekTrialDemo();
+          const existingReal = s.checkIns.filter((entry) => !isDemoCheckIn(entry));
+          const demoNotes = buildDemoCoachNotes();
+          return {
+            checkIns: [...demo.checkIns, ...existingReal].sort((a, b) =>
+              b.createdAt.localeCompare(a.createdAt)
+            ),
+            moods: { ...demo.moods, ...s.moods },
+            coachNotes: [
+              ...demoNotes,
+              ...s.coachNotes.filter((note) => !isDemoNote(note)),
+            ].slice(0, MAX_COACH_NOTES),
+            lastDeepInsight: demo.deepInsight,
+            weeklyInsights: [demo.deepInsight, ...s.weeklyInsights.filter((insight) => !insight.isDemo)],
+            settings: {
+              ...s.settings,
+              premium: false,
+              complimentaryAccess: demo.complimentaryAccess,
+            },
+            updatedAt: new Date().toISOString(),
+          };
+        }),
+
       removeDemoData: () =>
         set((s) => {
-          const demoDateKeys = new Set(buildDemoCheckIns().map((entry) => entry.dateKey));
+          const demoDateKeys = new Set([
+            ...buildDemoCheckIns(),
+            ...buildFirstWeekTrialDemo().checkIns,
+          ].map((entry) => entry.dateKey));
           const remainingCheckIns = s.checkIns.filter((entry) => !isDemoCheckIn(entry));
           const remainingDateKeys = new Set(remainingCheckIns.map((entry) => entry.dateKey));
           const remainingMoods = { ...s.moods };
@@ -232,6 +270,9 @@ export const useApp = create<AppState>()(
             coachNotes: s.coachNotes.filter((note) => !isDemoNote(note)),
             lastDeepInsight: s.lastDeepInsight?.isDemo ? null : s.lastDeepInsight,
             weeklyInsights: s.weeklyInsights.filter((insight) => !insight.isDemo),
+            settings: s.settings.complimentaryAccess?.isDemo
+              ? { ...s.settings, complimentaryAccess: null }
+              : s.settings,
             updatedAt: new Date().toISOString(),
           };
         }),
@@ -255,7 +296,7 @@ export const useApp = create<AppState>()(
 
       canUseCoach: () => {
         const state = get();
-        if (state.settings.premium) return true;
+        if (hasTranqlyAccess(state.settings.premium, state.settings.complimentaryAccess)) return true;
         const usage =
           state.coachUsage.dateKey === todayKey()
             ? state.coachUsage
@@ -265,7 +306,7 @@ export const useApp = create<AppState>()(
 
       coachRemaining: () => {
         const state = get();
-        if (state.settings.premium) return Infinity;
+        if (hasTranqlyAccess(state.settings.premium, state.settings.complimentaryAccess)) return Infinity;
         const usage =
           state.coachUsage.dateKey === todayKey()
             ? state.coachUsage
@@ -408,6 +449,7 @@ export const useApp = create<AppState>()(
             ? {
                 ...local.settings,
                 ...remote.settings,
+                complimentaryAccess: normalizeComplimentaryAccess(remote.settings.complimentaryAccess ?? local.settings.complimentaryAccess),
                 notificationSettings: {
                   ...DEFAULT_NOTIFICATION_SETTINGS,
                   ...local.settings.notificationSettings,
@@ -417,6 +459,7 @@ export const useApp = create<AppState>()(
             : {
                 ...remote.settings,
                 ...local.settings,
+                complimentaryAccess: normalizeComplimentaryAccess(local.settings.complimentaryAccess ?? remote.settings.complimentaryAccess),
                 notificationSettings: {
                   ...DEFAULT_NOTIFICATION_SETTINGS,
                   ...remote.settings.notificationSettings,
@@ -458,6 +501,7 @@ export const useApp = create<AppState>()(
             {
               ...current.settings,
               ...(p.settings ?? {}),
+              complimentaryAccess: normalizeComplimentaryAccess(p.settings?.complimentaryAccess ?? current.settings.complimentaryAccess),
               notificationSettings: {
                 ...DEFAULT_NOTIFICATION_SETTINGS,
                 ...current.settings.notificationSettings,

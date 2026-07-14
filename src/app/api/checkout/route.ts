@@ -6,11 +6,10 @@ export const runtime = "nodejs";
 /**
  * Stripe Checkout skeleton.
  *
- * With STRIPE_SECRET_KEY + STRIPE_PRICE_ID set, creates a real Checkout
- * Session for the Premium subscription and returns its URL.
+ * With STRIPE_SECRET_KEY and the selected monthly/yearly price set, creates
+ * a real Checkout Session for the Plus subscription and returns its URL.
  *
- * Without keys (local dev / demo), returns { demo: true } and the client
- * simulates the upgrade so the full flow is testable end-to-end.
+ * Missing keys only return a simulated upgrade in local development.
  *
  * Production note: entitlement should be granted by the /api/stripe-webhook
  * handler on checkout.session.completed, the success redirect alone is a
@@ -18,12 +17,22 @@ export const runtime = "nodejs";
  */
 export async function POST(req: NextRequest) {
   const origin = req.headers.get("origin") ?? "http://localhost:3000";
+  const body = await req.json().catch(() => ({}));
+  const plan = body.plan === "monthly" ? "monthly" : "yearly";
 
   const secretKey = process.env.STRIPE_SECRET_KEY;
-  const priceId = process.env.STRIPE_PRICE_ID;
+  const priceId = plan === "yearly"
+    ? process.env.STRIPE_YEARLY_PRICE_ID
+    : process.env.STRIPE_MONTHLY_PRICE_ID ?? process.env.STRIPE_PRICE_ID;
 
   if (!secretKey || !priceId) {
-    return NextResponse.json({ demo: true });
+    if (process.env.NODE_ENV !== "production") {
+      return NextResponse.json({ demo: true, plan });
+    }
+    return NextResponse.json(
+      { error: `Stripe ${plan} pricing is not configured` },
+      { status: 503 }
+    );
   }
 
   try {
@@ -34,6 +43,7 @@ export async function POST(req: NextRequest) {
       success_url: `${origin}/?upgrade=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/?upgrade=cancelled`,
       allow_promotion_codes: true,
+      metadata: { plan },
     });
     return NextResponse.json({ url: session.url });
   } catch (err) {

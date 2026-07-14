@@ -1,3 +1,5 @@
+import type { ComplimentaryAccess } from "./access";
+
 export type Mood = "amazing" | "good" | "okay" | "meh" | "rough";
 
 export const MOODS: { key: Mood; emoji: string; label: string }[] = [
@@ -95,6 +97,22 @@ export interface Settings {
   onboardingCoachStep?: "mic" | "journey" | "sanctuary" | null;
   onboardingSkippedAt?: string | null;
   onboardingCompletedAt?: string | null;
+  reflectionCoachMarkSeen?: boolean;
+  journeyCoachMarkSeen?: boolean;
+  sanctuaryCoachMarkSeen?: boolean;
+  onboardingStatus?: "not_started" | "in_progress" | "completed" | "skipped";
+  currentOnboardingStep?:
+    | "welcome"
+    | "name"
+    | "firstWeek"
+    | "freeWeek"
+    | "trial"
+    | "reflectionCoach"
+    | "journeyCoach"
+    | "sanctuaryCoach"
+    | null;
+  onboardingVersion?: number;
+  complimentaryAccess?: ComplimentaryAccess | null;
 }
 
 export type SanctuarySceneStatus = "draft" | "preview" | "live" | "archived";
@@ -156,6 +174,13 @@ export interface DeepInsight {
   pattern?: string;
   suggestion: string;
   affirmation: string;
+  gentleFocusTitle?: string;
+  evidenceLevel?: "limited" | "emerging" | "meaningful" | "strong";
+  completionMessage?: string;
+  reflectionDays?: number;
+  reflectionCount?: number;
+  rewardUnlocked?: boolean;
+  rewardId?: string;
   recurring_themes?: string[];
   mood_trend?: string;
   next_focus?: string;

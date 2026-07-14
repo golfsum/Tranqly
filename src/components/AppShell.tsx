@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import CoachAvatar from "@/components/CoachAvatar";
 import CoachChat from "@/components/CoachChat";
 import Confetti from "@/components/Confetti";
+import FirstWeekCompleteModal from "@/components/FirstWeekCompleteModal";
 import HistoryView from "@/components/HistoryView";
 import Onboarding from "@/components/Onboarding";
 import OnboardingCoachMarks from "@/components/OnboardingCoachMarks";
@@ -17,17 +18,27 @@ import { themeByKey } from "@/lib/themes";
 import { currentStreak } from "@/lib/streak";
 import { useApp } from "@/lib/store";
 import { useSync } from "@/lib/sync";
+import { normalizeComplimentaryAccess } from "@/lib/access";
 
 export default function AppShell() {
   const hydrated = useApp((s) => s.hydrated);
   const setPremium = useApp((s) => s.setPremium);
+  const updateSettings = useApp((s) => s.updateSettings);
   const name = useApp((s) => s.settings.name);
+  const premium = useApp((s) => s.settings.premium);
   const themeKey = useApp((s) => s.settings.theme);
+  const onboarded = useApp((s) => s.settings.onboarded);
+  const currentOnboardingStep = useApp((s) => s.settings.currentOnboardingStep);
+  const complimentaryAccess = useApp((s) => s.settings.complimentaryAccess);
+  const weeklyInsights = useApp((s) => s.weeklyInsights);
+  const lastDeepInsight = useApp((s) => s.lastDeepInsight);
   const checkIns = useApp((s) => s.checkIns);
   const { user, syncing } = useSync();
 
   const [tab, setTab] = useState<Tab>("today");
+  const [tabDirection, setTabDirection] = useState(1);
   const [showPremium, setShowPremium] = useState(false);
+  const [premiumInitialPlan, setPremiumInitialPlan] = useState<"yearly" | "monthly">("yearly");
   const [celebrate, setCelebrate] = useState(0);
   const [coachReplyModal, setCoachReplyModal] = useState<{
     entry: string;
@@ -39,6 +50,16 @@ export default function AppShell() {
   } | null>(null);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [feedbackText, setFeedbackText] = useState("");
+  const tabOrder: Tab[] = ["today", "journey", "settings"];
+  const changeTab = (nextTab: Tab) => {
+    if (nextTab === tab) return;
+    setTabDirection(tabOrder.indexOf(nextTab) > tabOrder.indexOf(tab) ? 1 : -1);
+    setTab(nextTab);
+  };
+  const firstWeekEnded =
+    !premium &&
+    complimentaryAccess &&
+    (complimentaryAccess.status === "completed" || complimentaryAccess.status === "expired");
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -51,6 +72,25 @@ export default function AppShell() {
       window.history.replaceState({}, "", "/");
     }
   }, [setPremium]);
+
+  useEffect(() => {
+    if (hydrated && !onboarded && currentOnboardingStep === "firstWeek") setTab("today");
+    if (hydrated && onboarded && currentOnboardingStep === "reflectionCoach") setTab("today");
+  }, [currentOnboardingStep, hydrated, onboarded]);
+
+  useEffect(() => {
+    if (!hydrated || !complimentaryAccess || complimentaryAccess.status !== "active") return;
+    const syncAccessStatus = () => {
+      const normalized = normalizeComplimentaryAccess(complimentaryAccess);
+      if (normalized?.status !== complimentaryAccess.status) {
+        updateSettings({ complimentaryAccess: normalized });
+      }
+    };
+    syncAccessStatus();
+    const delay = Math.max(1_000, new Date(complimentaryAccess.endsAt).getTime() - Date.now() + 1_000);
+    const timeout = window.setTimeout(syncAccessStatus, delay);
+    return () => window.clearTimeout(timeout);
+  }, [complimentaryAccess, hydrated, updateSettings]);
 
   if (!hydrated) {
     return (
@@ -92,10 +132,10 @@ export default function AppShell() {
       {tab === "today" && (
         <motion.div
           key="today"
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -8 }}
-          transition={{ duration: 0.18 }}
+          initial={{ opacity: 0, x: tabDirection * 22 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: tabDirection * -18 }}
+          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
           className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden short-fit:gap-1.5 lg:gap-4"
         >
           <header className="shrink-0 px-1 pt-1 short-fit:pt-0 lg:hidden">
@@ -122,6 +162,22 @@ export default function AppShell() {
             </p>
           </header>
 
+          {complimentaryAccess?.status === "active" ? (
+            <div className="shrink-0 rounded-2xl border border-calm/25 bg-calm/10 px-4 py-2 text-xs leading-relaxed text-dim">
+              <span className="font-black text-calm">
+                Day {Math.min(7, Math.max(1, Math.floor((Date.now() - new Date(complimentaryAccess.startedAt).getTime()) / 86_400_000) + 1))} of 7
+              </span>
+              <span className="mx-2 text-faint">|</span>
+              Your first weekly reflection arrives in seven days.
+            </div>
+          ) : null}
+          {firstWeekEnded ? (
+            <div className="shrink-0 rounded-2xl border border-calm/25 bg-calm/10 px-4 py-3 text-sm leading-relaxed text-dim">
+              <span className="font-black text-calm">Welcome back.</span>{" "}
+              Your first week is waiting if you would like to revisit it. When you are ready, begin Week Two.
+            </div>
+          ) : null}
+
           <CoachChat
             onCheckedIn={() => setCelebrate((c) => c + 1)}
             onNeedPremium={() => setShowPremium(true)}
@@ -140,11 +196,11 @@ export default function AppShell() {
       {tab === "journey" && (
         <motion.div
           key="journey"
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -8 }}
-          transition={{ duration: 0.18 }}
-          className="no-scrollbar min-h-0 flex-1 overflow-y-auto"
+          initial={{ opacity: 0, x: tabDirection * 22 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: tabDirection * -18 }}
+          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+          className="no-scrollbar min-h-0 flex-1 overflow-y-auto lg:overflow-visible"
         >
           <div className="flex flex-col gap-4 pb-4">
             <HistoryView
@@ -158,11 +214,11 @@ export default function AppShell() {
       {tab === "settings" && (
         <motion.div
           key="settings"
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -8 }}
-          transition={{ duration: 0.18 }}
-          className="no-scrollbar min-h-0 flex-1 overflow-y-auto"
+          initial={{ opacity: 0, x: tabDirection * 22 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: tabDirection * -18 }}
+          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+          className="no-scrollbar min-h-0 flex-1 overflow-y-auto lg:overflow-visible"
           style={{ touchAction: "pan-y" }}
         >
           <SettingsView />
@@ -171,17 +227,55 @@ export default function AppShell() {
     </AnimatePresence>
   );
 
+  const daySevenOpen = Boolean(
+    onboarded &&
+      !premium &&
+      complimentaryAccess &&
+      (complimentaryAccess.status === "completed" || complimentaryAccess.status === "expired") &&
+      !complimentaryAccess.conversionPromptShownAt
+  );
+  const daySevenInsight = weeklyInsights[0] ?? lastDeepInsight;
+  const firstWeekEntries = complimentaryAccess
+    ? checkIns.filter((entry) => {
+        const time = new Date(entry.createdAt).getTime();
+        return time >= new Date(complimentaryAccess.startedAt).getTime() && time <= new Date(complimentaryAccess.endsAt).getTime();
+      })
+    : [];
+  const firstWeekReflectionDays = new Set(firstWeekEntries.map((entry) => entry.dateKey)).size;
+  const markDaySevenSeen = () => {
+    if (!complimentaryAccess) return;
+    updateSettings({
+      complimentaryAccess: {
+        ...complimentaryAccess,
+        conversionPromptShownAt: new Date().toISOString(),
+      },
+    });
+  };
+  const continueAfterDaySeven = (plan: "monthly" | "yearly") => {
+    markDaySevenSeen();
+    setPremiumInitialPlan(plan);
+    setShowPremium(true);
+  };
+
   return (
     <main className="min-h-dvh w-full overflow-hidden bg-bg text-fg">
       <Onboarding />
-      <OnboardingCoachMarks currentTab={tab} onTabChange={setTab} />
+      <OnboardingCoachMarks onComplete={() => setTab("today")} />
       <Confetti trigger={celebrate} />
+      <FirstWeekCompleteModal
+        open={daySevenOpen}
+        insight={daySevenInsight}
+        reflectionDays={firstWeekReflectionDays}
+        reflectionCount={firstWeekEntries.length}
+        onNotNow={markDaySevenSeen}
+        onContinue={continueAfterDaySeven}
+      />
 
       <div className="mx-auto flex h-dvh w-full max-w-lg flex-col overflow-hidden px-4 pt-3 short-fit:pt-2 shorter:pt-1.5 lg:hidden">
         <div className="flex min-h-0 flex-1 flex-col pb-24">
           {activePanel}
         </div>
-        <TabBar tab={tab} onChange={setTab} />
+        <TabBar tab={tab} onChange={changeTab} />
       </div>
 
       <div className="hidden h-dvh grid-cols-[260px_minmax(0,1fr)_340px] gap-6 overflow-hidden p-6 lg:grid xl:grid-cols-[280px_minmax(0,1fr)_380px]">
@@ -203,7 +297,9 @@ export default function AppShell() {
               return (
                 <button
                   key={key}
-                  onClick={() => setTab(key as Tab)}
+                  data-testid={`desktop-tab-${key}`}
+                  data-onboarding-target={key === "journey" ? "journey" : key === "settings" ? "sanctuary" : undefined}
+                  onClick={() => changeTab(key as Tab)}
                   className={`rounded-2xl border px-4 py-3 text-left transition ${
                     active
                       ? "border-calm/45 bg-calm/15 text-fg"
@@ -218,10 +314,10 @@ export default function AppShell() {
           </nav>
           <div className="mt-auto rounded-2xl border border-edge bg-ink/60 p-4">
             <p className="text-xs font-black uppercase tracking-[0.18em] text-calm">Quick Actions</p>
-            <button onClick={() => setTab("today")} className="mt-3 w-full rounded-xl bg-button px-3 py-2 text-sm font-black">
+            <button onClick={() => changeTab("today")} className="mt-3 w-full rounded-xl bg-button px-3 py-2 text-sm font-black">
               New reflection
             </button>
-            <button onClick={() => setTab("journey")} className="mt-2 w-full rounded-xl border border-edge bg-card px-3 py-2 text-sm font-bold text-dim">
+            <button onClick={() => changeTab("journey")} className="mt-2 w-full rounded-xl border border-edge bg-card px-3 py-2 text-sm font-bold text-dim">
               View journey
             </button>
           </div>
@@ -246,7 +342,14 @@ export default function AppShell() {
               {streak} day streak
             </div>
           </header>
-          <div className="min-h-0 flex-1 overflow-hidden">
+          <div
+            data-testid="desktop-content-scroll"
+            className={`min-h-0 flex-1 ${
+              tab === "today"
+                ? "overflow-hidden"
+                : "desktop-panel-scroll overflow-y-auto overscroll-contain pr-2"
+            }`}
+          >
             {activePanel}
           </div>
         </section>
@@ -357,6 +460,7 @@ export default function AppShell() {
 
       <PremiumModal
         open={showPremium}
+        initialPlan={premiumInitialPlan}
         onClose={() => setShowPremium(false)}
         onUpgraded={() => {
           setShowPremium(false);

@@ -1,0 +1,34 @@
+{
+  "size": {
+    "width": 1290,
+    "height": 2796
+  },
+  "generatedAt": "2026-07-14T03:55:30.495Z",
+  "screenshots": [
+    {
+      "output": "01-notice-what-matters.png",
+      "source": "02-personal-insight-current.png",
+      "title": "Notice What Matters"
+    },
+    {
+      "output": "02-reflect-in-one-minute.png",
+      "source": "01-insights-current.png",
+      "title": "Reflect In One Minute"
+    },
+    {
+      "output": "03-see-your-progress.png",
+      "source": "03-first-week-current.png",
+      "title": "See Your Progress"
+    },
+    {
+      "output": "04-choose-your-sanctuary.png",
+      "source": "06-themes-current.png",
+      "title": "Choose Your Sanctuary"
+    },
+    {
+      "output": "05-keep-reflections-private.png",
+      "source": "07-privacy-current.png",
+      "title": "Keep Reflections Private"
+    }
+  ]
+}

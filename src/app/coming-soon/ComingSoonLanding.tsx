@@ -404,7 +404,7 @@ export default function ComingSoonLanding({ launchMode = false }: { launchMode?:
               <a href="#features" className="transition hover:text-white">Features</a>
               <a href="#how-it-works" className="transition hover:text-white">How it works</a>
               <a href="#sanctuaries" className="transition hover:text-white">Sanctuaries</a>
-              <Link href={launchMode ? "/app" : "#waitlist"} className="rounded-[18px] bg-gradient-to-r from-[#8038f0] to-[#a855f7] px-7 py-4 font-semibold text-white shadow-[0_12px_30px_rgba(138,80,255,0.34)]">
+              <Link href={launchMode ? "#pricing" : "#waitlist"} className="rounded-[18px] bg-gradient-to-r from-[#8038f0] to-[#a855f7] px-7 py-4 font-semibold text-white shadow-[0_12px_30px_rgba(138,80,255,0.34)]">
                 {launchMode ? "Get started" : "Lock in $3.99/mo"}
               </Link>
             </nav>
@@ -453,7 +453,7 @@ export default function ComingSoonLanding({ launchMode = false }: { launchMode?:
               {!launchMode ? <CurvedArrow /> : null}
 
               {launchMode ? (
-                <Link href="/app" className="mt-5 inline-flex min-h-16 w-full max-w-[34rem] items-center justify-center rounded-full bg-gradient-to-r from-[#8f3fff] to-[#b15cff] px-9 text-base font-bold text-white shadow-[0_14px_40px_rgba(149,80,255,0.45)] transition hover:brightness-110">
+                <Link href="#pricing" className="mt-5 inline-flex min-h-16 w-full max-w-[34rem] items-center justify-center rounded-full bg-gradient-to-r from-[#8f3fff] to-[#b15cff] px-9 text-base font-bold text-white shadow-[0_14px_40px_rgba(149,80,255,0.45)] transition hover:brightness-110">
                   Get started
                 </Link>
               ) : (
@@ -645,13 +645,32 @@ export default function ComingSoonLanding({ launchMode = false }: { launchMode?:
                     </li>
                   ))}
                 </ul>
-                <div className="rounded-[24px] border border-white/8 bg-white/[0.02] p-6 text-center">
+                <div className="space-y-3 rounded-[24px] border border-white/8 bg-white/[0.02] p-4 text-left">
                   {!launchMode ? <p className="text-lg text-white/45 line-through">$5.99 / month</p> : null}
-                  <p className="mt-3 text-[3.1rem] font-black text-white">{launchMode ? "$5.99" : "$3.99"}</p>
-                  <p className="text-[1.3rem] text-white/82">/ month</p>
-                  <p className="mt-2 text-[1.35rem] font-black text-white">{launchMode ? "or $59.99/year" : "for life"}</p>
-                  <p className="mt-4 text-sm text-white/48">{launchMode ? "Choose monthly or yearly in Tranqly Plus." : "Early access pricing. Limited time."}</p>
-                  {launchMode ? <Link href="/app" className="mt-5 inline-flex min-h-11 w-full items-center justify-center rounded-full bg-gradient-to-r from-[#8038f0] to-[#a855f7] px-5 text-sm font-bold text-white">Get started</Link> : null}
+                  {launchMode ? (
+                    <>
+                      <div className="rounded-2xl border border-[#9d63d8] bg-[#24152f] p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="font-black text-white">Yearly</p>
+                          <span className="rounded-full bg-[#8b45de]/25 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-[#d6a2ff]">Best value</span>
+                        </div>
+                        <p className="mt-2 text-2xl font-black text-white">$59.99 billed yearly</p>
+                        <p className="mt-1 text-sm text-white/58">About $5 per month</p>
+                      </div>
+                      <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-4">
+                        <p className="font-black text-white">Monthly</p>
+                        <p className="mt-2 text-xl font-black text-white">$5.99 billed monthly</p>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <p className="mt-3 text-[3.1rem] font-black text-white">$3.99</p>
+                      <p className="text-[1.3rem] text-white/82">/ month</p>
+                      <p className="mt-2 text-[1.35rem] font-black text-white">for life</p>
+                    </>
+                  )}
+                  <p className="text-sm leading-6 text-white/48">{launchMode ? "Choose your billing period before checkout. Any eligible introductory offer will be shown before you confirm." : "Early access pricing. Limited time."}</p>
+                  {launchMode ? <Link href="#pricing" className="mt-5 inline-flex min-h-11 w-full items-center justify-center rounded-full bg-gradient-to-r from-[#8038f0] to-[#a855f7] px-5 text-sm font-bold text-white">Get started</Link> : null}
                 </div>
               </div>
             </GlassCard>

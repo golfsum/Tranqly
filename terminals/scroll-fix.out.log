@@ -1,0 +1,10 @@
+
+> tranqly@1.0.0 dev
+> node scripts/run-next.mjs dev
+
+  ▲ Next.js 14.2.35
+  - Local:        http://localhost:3000
+  - Environments: .env
+
+ ✓ Starting...
+ ✓ Ready in 2.1s

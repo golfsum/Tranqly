@@ -1,26 +1,26 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { tap } from "@/lib/haptics";
 import { useApp } from "@/lib/store";
 
 const PERKS = [
   {
-    title: "Unlimited AI insights",
-    desc: "Receive guidance without the five-insight daily cap",
+    title: "Another week of thoughtful responses",
+    desc: "Keep reflecting without turning your first week into a wall",
   },
   {
-    title: "Weekly reflection summaries",
-    desc: "See what Tranqly notices across your week",
+    title: "Weekly reflections",
+    desc: "Receive a thoughtful summary that builds on what you share",
   },
   {
-    title: "Exclusive sanctuary themes",
-    desc: "Explore Plus sanctuaries alongside the places earned through reflection",
+    title: "More sanctuaries to explore",
+    desc: "Keep every place you earn and discover new ones over time",
   },
   {
-    title: "More personalized guidance over time",
-    desc: "Tranqly learns what helps you reflect clearly",
+    title: "More personal guidance over time",
+    desc: "Tranqly can keep noticing what helps you feel steady",
   },
 ];
 
@@ -40,25 +40,36 @@ export default function PremiumModal({
   open,
   onClose,
   onUpgraded,
+  initialPlan = "yearly",
 }: {
   open: boolean;
   onClose: () => void;
   onUpgraded: () => void;
+  initialPlan?: "yearly" | "monthly";
 }) {
   const setPremium = useApp((s) => s.setPremium);
   const [busy, setBusy] = useState(false);
+  const [selectedPlan, setSelectedPlan] = useState<"yearly" | "monthly">(initialPlan);
+
+  useEffect(() => {
+    if (open) setSelectedPlan(initialPlan);
+  }, [initialPlan, open]);
 
   const checkout = async () => {
     tap();
     setBusy(true);
     try {
-      const res = await fetch("/api/checkout", { method: "POST" });
+      const res = await fetch("/api/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan: selectedPlan }),
+      });
       const data = await res.json();
       if (data.url) {
         window.location.href = data.url;
         return;
       }
-      if (data.demo) {
+      if (data.demo && process.env.NODE_ENV !== "production") {
         setPremium(true);
         onUpgraded();
         return;
@@ -104,12 +115,11 @@ export default function PremiumModal({
                 <LotusMark />
               </motion.div>
               <h2 className="text-2xl font-extrabold tracking-tight">
-                Tranqly Plus
+                Ready for another week?
               </h2>
-              <p className="mt-1 text-sm text-dim">Go deeper with every reflection.</p>
+              <p className="mt-1 text-sm text-dim">Your first week is yours to keep, whether you continue or not.</p>
               <p className="mt-3 text-sm leading-relaxed text-dim">
-                Plus unlocks unlimited AI insights, weekly reflection summaries,
-                exclusive sanctuary themes, and more personalized guidance over time.
+                Your first week helped uncover meaningful patterns. Continue whenever it feels right.
               </p>
             </div>
 
@@ -133,22 +143,52 @@ export default function PremiumModal({
               ))}
             </ul>
 
+            <div className="mb-4 grid grid-cols-2 gap-2" role="radiogroup" aria-label="Billing period">
+              <button
+                type="button"
+                role="radio"
+                aria-checked={selectedPlan === "yearly"}
+                onClick={() => setSelectedPlan("yearly")}
+                className={`rounded-2xl border p-3 text-left transition ${selectedPlan === "yearly" ? "border-calm bg-calm/10" : "border-edge bg-ink"}`}
+              >
+                <span className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-black">Yearly</span>
+                  <span className="text-[9px] font-black uppercase tracking-wider text-calm">Best value</span>
+                </span>
+                <span className="mt-1 block text-sm font-bold">$59.99 per year</span>
+                <span className="mt-0.5 block text-[11px] text-faint">About $5 per month</span>
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={selectedPlan === "monthly"}
+                onClick={() => setSelectedPlan("monthly")}
+                className={`rounded-2xl border p-3 text-left transition ${selectedPlan === "monthly" ? "border-calm bg-calm/10" : "border-edge bg-ink"}`}
+              >
+                <span className="text-sm font-black">Monthly</span>
+                <span className="mt-1 block text-sm font-bold">$5.99 per month</span>
+                <span className="mt-0.5 block text-[11px] text-faint">Billed monthly</span>
+              </button>
+            </div>
+
             <motion.button
               whileTap={{ scale: 0.97 }}
               onClick={checkout}
               disabled={busy}
               className="flex min-h-[56px] w-full items-center justify-center rounded-2xl bg-gradient-to-r from-calm to-sea text-lg font-bold text-ink shadow-glow disabled:opacity-60"
             >
-              {busy ? "Opening checkout..." : "Start Plus \u2022 $5.99/mo"}
+              {busy
+                ? "Opening checkout..."
+                : "Begin Week Two"}
             </motion.button>
-            <p className="mt-2 text-center text-xs font-semibold text-faint">
-              Yearly option: $59.99/year
+            <p className="mt-2 text-center text-[11px] leading-relaxed text-faint">
+              Billing starts only after you confirm a paid plan. Your saved reflections and first weekly reflection remain available if you do not continue.
             </p>
             <button
               onClick={onClose}
               className="mt-3 min-h-[44px] w-full text-sm font-semibold text-faint"
             >
-              Not today, and that&apos;s okay
+              Not right now
             </button>
           </motion.div>
         </>
