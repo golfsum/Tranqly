@@ -17,7 +17,8 @@
     "production": {
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_API_BASE_URL": "https://tranqly.app"
+        "EXPO_PUBLIC_API_BASE_URL": "https://tranqly.app",
+        "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "tranqly-e91fb"
       }
     }
   },

@@ -90,7 +90,7 @@ export function localDeepInsight(
     evidenceLevel = "strong";
     completionMessage = "You made space to reflect every day this week.";
     insight = "Across your week, a clear thread appeared around showing up and noticing what mattered. The days may have looked different, but you kept giving yourself a place to name what was happening. That kind of attention can make patterns easier to see over time.";
-  } else if (reflectionDays >= 4) {
+  } else if (reflectionDays >= 3) {
     evidenceLevel = "meaningful";
     completionMessage = `You checked in on ${reflectionDays} days this week, and those moments gave Tranqly something meaningful to reflect on.`;
     insight = `Across several reflections, a recurring theme seemed to be your willingness to pause instead of letting the week blur together. What you shared points toward a useful starting place: the more specific your check-ins are, the easier it becomes to notice what helps.`;
@@ -130,7 +130,7 @@ export function localDeepInsight(
     completionMessage,
     reflectionDays,
     reflectionCount: entries.length,
-    rewardUnlocked: reflectionDays >= 7,
-    rewardId: reflectionDays >= 7 ? "forest-haven" : "none",
+    rewardUnlocked: false,
+    rewardId: "none",
   };
 }

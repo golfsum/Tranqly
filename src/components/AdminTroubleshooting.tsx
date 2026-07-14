@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { firebaseConfigured } from "@/lib/firebase";
+import { firebaseConfigured, getFirebase } from "@/lib/firebase";
 import { listAdminAiUsage, listAdminErrors, listAdminSiteAnalytics, listAdminSupportTickets, listAdminUsers, listAdminWaitlistSignups, WAITLIST_MAX_SPOTS } from "@/lib/adminSupport";
 
 type AdminRow = Record<string, any> & { id: string };
@@ -11,6 +11,13 @@ function formatDate(value: any) {
   if (typeof value === "string") return value;
   if (typeof value?.toDate === "function") return value.toDate().toLocaleString();
   return String(value);
+}
+
+function dateValue(value: any) {
+  if (!value) return null;
+  if (typeof value?.toDate === "function") return value.toDate() as Date;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 function featureCalls(period: AdminRow | undefined, feature: string) {
@@ -46,27 +53,43 @@ export default function AdminTroubleshooting() {
     logs: [],
   });
   const [loading, setLoading] = useState(false);
+  const [loadErrors, setLoadErrors] = useState<string[]>([]);
+
+  async function loadDashboard() {
+    if (!firebaseConfigured()) return;
+    setLoading(true);
+    setLoadErrors([]);
+    const loaders = [
+      ["users", listAdminUsers],
+      ["support tickets", listAdminSupportTickets],
+      ["errors", listAdminErrors],
+      ["AI usage", listAdminAiUsage],
+      ["waitlist", listAdminWaitlistSignups],
+      ["site analytics", listAdminSiteAnalytics],
+    ] as const;
+    const results = await Promise.allSettled(loaders.map(([, loader]) => loader()));
+    const failures: string[] = [];
+
+    results.forEach((result, index) => {
+      const label = loaders[index][0];
+      if (result.status === "rejected") {
+        const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
+        failures.push(`${label}: ${reason}`);
+        return;
+      }
+      if (index === 0) setUsers(result.value as AdminRow[]);
+      if (index === 1) setTickets(result.value as AdminRow[]);
+      if (index === 2) setErrors(result.value as AdminRow[]);
+      if (index === 3) setAiUsage(result.value as { periods: AdminRow[]; users: AdminRow[]; logs: AdminRow[] });
+      if (index === 4) setWaitlist(result.value as AdminRow[]);
+      if (index === 5) setSiteAnalytics(result.value as AdminRow[]);
+    });
+    setLoadErrors(failures);
+    setLoading(false);
+  }
 
   useEffect(() => {
-    if (!firebaseConfigured()) return;
-    let cancelled = false;
-    setLoading(true);
-    Promise.all([listAdminUsers(), listAdminSupportTickets(), listAdminErrors(), listAdminAiUsage(), listAdminWaitlistSignups(), listAdminSiteAnalytics()])
-      .then(([nextUsers, nextTickets, nextErrors, nextAiUsage, nextWaitlist, nextSiteAnalytics]) => {
-        if (cancelled) return;
-        setUsers(nextUsers as AdminRow[]);
-        setTickets(nextTickets as AdminRow[]);
-        setErrors(nextErrors as AdminRow[]);
-        setAiUsage(nextAiUsage as { periods: AdminRow[]; users: AdminRow[]; logs: AdminRow[] });
-        setWaitlist(nextWaitlist as AdminRow[]);
-        setSiteAnalytics(nextSiteAnalytics as AdminRow[]);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+    void loadDashboard();
   }, []);
 
   const stats = useMemo(() => {
@@ -78,9 +101,14 @@ export default function AdminTroubleshooting() {
     const monthSite = siteAnalytics.find((period) => period.id === `month-${month}`);
     const totalAiCallsThisMonth = Number(monthAi?.totalCalls ?? 0);
     const totalReflections = users.reduce((sum, user) => sum + Number(user.reflectionCount ?? 0), 0);
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
     return {
       totalUsers: users.length,
-      activeToday: users.filter((user) => formatDate(user.lastActiveAt).includes(today)).length,
+      activeToday: users.filter((user) => {
+        const activeAt = dateValue(user.lastActiveAt);
+        return Boolean(activeAt && activeAt >= todayStart);
+      }).length,
       iosUsers: users.filter((user) => user.platformLastUsed === "ios").length,
       webUsers: users.filter((user) => user.platformLastUsed === "web").length,
       payingUsers: users.filter((user) => user.plan === "premium").length,
@@ -137,8 +165,32 @@ export default function AdminTroubleshooting() {
             Shows safe metadata only. Reflection text, transcripts, and generated insights are not displayed.
           </p>
         </div>
-        {loading ? <span className="text-xs font-black text-faint">Loading...</span> : null}
+        <div className="flex items-center gap-2">
+          <span className="rounded-full border border-edge bg-ink px-3 py-2 text-[10px] font-black uppercase tracking-wide text-calm">
+            Live Firestore
+          </span>
+          <button
+            type="button"
+            onClick={() => void loadDashboard()}
+            disabled={loading}
+            className="rounded-full border border-edge bg-ink px-3 py-2 text-xs font-black text-dim disabled:opacity-50"
+          >
+            {loading ? "Refreshing..." : "Refresh"}
+          </button>
+        </div>
       </div>
+
+      {loadErrors.length ? (
+        <div className="mb-4 rounded-2xl border border-rose-400/30 bg-rose-400/10 p-4 text-sm text-rose-100">
+          <p className="font-black">Some live dashboard data could not load.</p>
+          <p className="mt-1 leading-relaxed">
+            Firestore admin access requires an `admins/{getFirebase()?.auth.currentUser?.uid ?? "your-admin-uid"}` document. The allowed admin email alone does not grant database access.
+          </p>
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-rose-100/80">
+            {loadErrors.map((error) => <li key={error}>{error}</li>)}
+          </ul>
+        </div>
+      ) : null}
 
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
         {[

@@ -69,7 +69,7 @@ export const THEMES: Theme[] = [
     calmRgb: "231 166 216",
     seaRgb: "189 169 255",
     unlockType: "reflections",
-    unlockReflections: 14,
+    unlockReflections: 0,
   },
   {
     key: "twilight",
@@ -139,7 +139,7 @@ export const THEMES: Theme[] = [
     calmRgb: "135 184 201",
     seaRgb: "242 165 140",
     unlockType: "reflections",
-    unlockReflections: 21,
+    unlockReflections: 14,
   },
   {
     key: "forest",
@@ -209,7 +209,7 @@ export const THEMES: Theme[] = [
     calmRgb: "229 166 92",
     seaRgb: "217 137 178",
     unlockType: "reflections",
-    unlockReflections: 28,
+    unlockReflections: 21,
   },
   {
     key: "mountain",
@@ -244,7 +244,7 @@ export const THEMES: Theme[] = [
     calmRgb: "169 191 232",
     seaRgb: "211 176 255",
     unlockType: "reflections",
-    unlockReflections: 24,
+    unlockReflections: 42,
   },
   {
     key: "misty",
@@ -279,7 +279,7 @@ export const THEMES: Theme[] = [
     calmRgb: "178 200 179",
     seaRgb: "184 167 223",
     unlockType: "reflections",
-    unlockReflections: 27,
+    unlockReflections: 28,
   },
   {
     key: "desert",
@@ -314,7 +314,7 @@ export const THEMES: Theme[] = [
     calmRgb: "209 122 82",
     seaRgb: "181 131 199",
     unlockType: "reflections",
-    unlockReflections: 30,
+    unlockReflections: 35,
   },
   {
     key: "snowfall",
@@ -382,7 +382,8 @@ export const THEMES: Theme[] = [
     buttonRgb: "35 108 110",
     calmRgb: "110 231 183",
     seaRgb: "184 121 255",
-    unlockType: "plus",
+    unlockType: "reflections",
+    unlockReflections: 49,
   },
   {
     key: "cloud",
@@ -395,7 +396,7 @@ export const THEMES: Theme[] = [
     artwork: "/sanctuary/cloud_sanctuary.PNG",
     ambient: ["Slow clouds", "Soft light", "Drifting mist", "Warm horizon"],
     palette: ["Cloud Pink", "Lavender", "Peach", "Soft Violet", "Warm Gold"],
-    free: false,
+    free: true,
     bg: "#1B162B",
     card: "#28213A",
     ink: "#120F1E",
@@ -416,7 +417,8 @@ export const THEMES: Theme[] = [
     buttonRgb: "130 101 168",
     calmRgb: "215 184 255",
     seaRgb: "241 184 139",
-    unlockType: "plus",
+    unlockType: "reflections",
+    unlockReflections: 0,
   },
 ];
 

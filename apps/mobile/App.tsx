@@ -1,10 +1,14 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as AppleAuthentication from "expo-apple-authentication";
+import * as Google from "expo-auth-session/providers/google";
 import { Audio } from "expo-av";
 import Constants from "expo-constants";
+import * as Crypto from "expo-crypto";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Notifications from "expo-notifications";
 import { StatusBar } from "expo-status-bar";
+import * as WebBrowser from "expo-web-browser";
 import { Component, ErrorInfo, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -33,6 +37,11 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import Purchases, { LOG_LEVEL } from "react-native-purchases";
 import { getPasswordStrength, isPasswordValid, passwordRuleItems } from "./lib/authRules";
 import {
+  createMobileSupportTicket,
+  MobileSupportCategory,
+  syncMobileUserProfile,
+} from "./lib/firestoreRest";
+import {
   adjustedTimeForQuietHours,
   adaptiveSuggestion,
   dailyReminderCadenceDays,
@@ -42,6 +51,8 @@ import {
   QUIET_MINUTE_OPTIONS,
   updateReflectionTiming,
 } from "./lib/notifications";
+
+WebBrowser.maybeCompleteAuthSession();
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -136,6 +147,7 @@ interface AppState {
   sanctuaryTheme?: SanctuaryThemeKey;
   notificationSettings?: NotificationSettings;
   sanctuaryUnlockNotifications?: Record<string, string | null>;
+  seasonalSanctuaryUnlocks?: Record<string, string>;
   onboardingCompleted?: boolean;
   onboardingCoachCompleted?: boolean;
   onboardingCoachStep?: "mic" | "journey" | "sanctuary" | null;
@@ -274,7 +286,7 @@ const SANCTUARY_THEMES: {
     artwork: require("./assets/images/sanctuary/lotus_blossom.png"),
     ambient: ["Floating petals", "Gentle ripples", "Fireflies", "Soft glow"],
     palette: ["Lavender", "Violet", "Sage", "Rose", "Mist"],
-    unlockDays: 14,
+    unlockDays: 0,
     free: true,
     unlockType: "reflections",
   },
@@ -306,7 +318,7 @@ const SANCTUARY_THEMES: {
     artwork: require("./assets/images/sanctuary/ocean_calm.png"),
     ambient: ["Moving waves", "Ocean mist", "Flying birds", "Water shimmer"],
     palette: ["Ocean", "Teal", "Seafoam", "Coral", "Mist"],
-    unlockDays: 21,
+    unlockDays: 14,
     free: false,
     unlockType: "reflections",
   },
@@ -338,7 +350,7 @@ const SANCTUARY_THEMES: {
     artwork: require("./assets/images/sanctuary/sunset_fields.png"),
     ambient: ["Swaying grass", "Birds", "Warm sunlight", "Floating seeds"],
     palette: ["Amber", "Peach", "Orange", "Pink", "Lavender"],
-    unlockDays: 28,
+    unlockDays: 21,
     free: false,
     unlockType: "reflections",
   },
@@ -354,7 +366,7 @@ const SANCTUARY_THEMES: {
     artwork: require("./assets/images/sanctuary/mountain_peak.png"),
     ambient: ["Clouds", "Mountain breeze", "Snow particles", "Distant birds"],
     palette: ["Slate", "Snow", "Granite", "Frost", "Lavender"],
-    unlockDays: 24,
+    unlockDays: 42,
     free: false,
     unlockType: "reflections",
   },
@@ -370,7 +382,7 @@ const SANCTUARY_THEMES: {
     artwork: require("./assets/images/sanctuary/misty_meadows.png"),
     ambient: ["Morning fog", "Wildflowers", "Floating pollen", "Butterflies"],
     palette: ["Mist", "Sage", "Blue", "Lavender", "Green"],
-    unlockDays: 27,
+    unlockDays: 28,
     free: false,
     unlockType: "reflections",
   },
@@ -386,7 +398,7 @@ const SANCTUARY_THEMES: {
     artwork: require("./assets/images/sanctuary/desert_dusk.png"),
     ambient: ["Wind", "Sand drifting", "Warm glow", "Desert plants"],
     palette: ["Terracotta", "Sand", "Purple", "Orange", "Brown"],
-    unlockDays: 30,
+    unlockDays: 35,
     free: false,
     unlockType: "reflections",
   },
@@ -418,9 +430,9 @@ const SANCTUARY_THEMES: {
     artwork: require("./assets/images/sanctuary/northern_lights.png"),
     ambient: ["Aurora animation", "Stars", "Water reflections", "Light shimmer"],
     palette: ["Aurora", "Emerald", "Violet", "Midnight", "Indigo"],
-    unlockDays: 0,
+    unlockDays: 49,
     free: false,
-    unlockType: "plus",
+    unlockType: "reflections",
   },
   {
     key: "cloud",
@@ -435,8 +447,8 @@ const SANCTUARY_THEMES: {
     ambient: ["Slow clouds", "Soft light", "Drifting mist", "Warm horizon"],
     palette: ["Cloud", "Lavender", "Peach", "Violet", "Gold"],
     unlockDays: 0,
-    free: false,
-    unlockType: "plus",
+    free: true,
+    unlockType: "reflections",
   },
 ];
 
@@ -540,6 +552,102 @@ const APP_THEME_PALETTES: Partial<Record<SanctuaryThemeKey, AppThemePalette>> & 
     helperEdge: "rgba(215,184,255,0.24)",
     weeklyBg: "#251330",
   },
+  mountain: {
+    bg: "#090D1B",
+    card: "#151B2E",
+    ink: "#070A14",
+    edge: "#36425F",
+    fg: "#F6F7FF",
+    dim: "#C8D1E8",
+    faint: "#8792AE",
+    accent: "#A9BFE8",
+    accent2: "#D3B0FF",
+    button: "#52678E",
+    disabled: "#1B2236",
+    helperBg: "rgba(169,191,232,0.12)",
+    helperEdge: "rgba(211,176,255,0.24)",
+    weeklyBg: "#10162A",
+  },
+  misty: {
+    bg: "#0D1318",
+    card: "#182129",
+    ink: "#080D11",
+    edge: "#42515A",
+    fg: "#F5FAF8",
+    dim: "#C7D4D0",
+    faint: "#869791",
+    accent: "#B2C8B3",
+    accent2: "#B8A7DF",
+    button: "#596E68",
+    disabled: "#202B2D",
+    helperBg: "rgba(178,200,179,0.12)",
+    helperEdge: "rgba(184,167,223,0.24)",
+    weeklyBg: "#111A20",
+  },
+  desert: {
+    bg: "#160E13",
+    card: "#26171E",
+    ink: "#0E090C",
+    edge: "#604037",
+    fg: "#FFF8F3",
+    dim: "#DFC9BE",
+    faint: "#A37F75",
+    accent: "#D17A52",
+    accent2: "#B583C7",
+    button: "#81513E",
+    disabled: "#302026",
+    helperBg: "rgba(209,122,82,0.12)",
+    helperEdge: "rgba(181,131,199,0.24)",
+    weeklyBg: "#21131B",
+  },
+  snowfall: {
+    bg: "#0A1020",
+    card: "#141D31",
+    ink: "#070C18",
+    edge: "#394A68",
+    fg: "#F7FAFF",
+    dim: "#CBD9E7",
+    faint: "#8395AA",
+    accent: "#B7D7F0",
+    accent2: "#D6C7FF",
+    button: "#58738D",
+    disabled: "#1D293A",
+    helperBg: "rgba(183,215,240,0.12)",
+    helperEdge: "rgba(214,199,255,0.24)",
+    weeklyBg: "#10192D",
+  },
+  northern: {
+    bg: "#040B18",
+    card: "#09172A",
+    ink: "#020711",
+    edge: "#244861",
+    fg: "#F3FFFC",
+    dim: "#B8DDD4",
+    faint: "#6E9C99",
+    accent: "#6EE7B7",
+    accent2: "#B879FF",
+    button: "#286D68",
+    disabled: "#102A35",
+    helperBg: "rgba(110,231,183,0.12)",
+    helperEdge: "rgba(184,121,255,0.24)",
+    weeklyBg: "#07152A",
+  },
+  cloud: {
+    bg: "#151020",
+    card: "#251C33",
+    ink: "#0D0A14",
+    edge: "#59466F",
+    fg: "#FFF8FF",
+    dim: "#DDCDE8",
+    faint: "#9F89AF",
+    accent: "#D7B8FF",
+    accent2: "#F1B88B",
+    button: "#765991",
+    disabled: "#30243E",
+    helperBg: "rgba(215,184,255,0.12)",
+    helperEdge: "rgba(241,184,139,0.24)",
+    weeklyBg: "#1E162D",
+  },
 };
 
 const STORE_KEY = "tranqly-mobile-v1";
@@ -559,6 +667,13 @@ const FIREBASE_API_KEY =
   process.env.NEXT_PUBLIC_FIREBASE_API_KEY ||
   (Constants.expoConfig?.extra?.firebaseApiKey as string | undefined) ||
   "";
+const FIREBASE_PROJECT_ID =
+  process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID ||
+  process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ||
+  (Constants.expoConfig?.extra?.firebaseProjectId as string | undefined) ||
+  "";
+const GOOGLE_IOS_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID?.trim() || "";
+const GOOGLE_WEB_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID?.trim() || "";
 const devHostUri =
   (Constants.expoConfig as { hostUri?: string } | undefined)?.hostUri ||
   (Constants.manifest2?.extra?.expoGo as { debuggerHost?: string } | undefined)
@@ -1343,7 +1458,18 @@ function getSanctuaryTheme(key: SanctuaryThemeKey) {
   return SANCTUARY_THEMES.find((theme) => theme.key === key) || SANCTUARY_THEMES[0];
 }
 
-const PRIMARY_SANCTUARY_KEYS: SanctuaryThemeKey[] = ["twilight", "forest", "blossom", "ocean", "sunrise"];
+const PRIMARY_SANCTUARY_KEYS: SanctuaryThemeKey[] = [
+  "cloud",
+  "twilight",
+  "blossom",
+  "forest",
+  "ocean",
+  "sunrise",
+  "misty",
+  "desert",
+  "mountain",
+  "northern",
+];
 
 function qualifyingReflectionDays(entries: CheckIn[]) {
   return new Set(
@@ -1359,7 +1485,7 @@ function qualifyingReflectionDays(entries: CheckIn[]) {
 function currentWeekReflectionDays(entries: CheckIn[]) {
   const start = new Date();
   start.setHours(0, 0, 0, 0);
-  start.setDate(start.getDate() - start.getDay());
+  start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
   return new Set(
     entries
       .filter((entry) => {
@@ -1368,6 +1494,21 @@ function currentWeekReflectionDays(entries: CheckIn[]) {
       })
       .map((entry) => entry.dateKey)
   ).size;
+}
+
+function latestCompletedWeeklyPeriod(now = new Date()) {
+  const end = new Date(now);
+  end.setHours(23, 59, 59, 999);
+  end.setDate(end.getDate() - end.getDay());
+  const start = new Date(end);
+  start.setHours(0, 0, 0, 0);
+  start.setDate(end.getDate() - 6);
+  return {
+    start,
+    end,
+    startKey: todayKeyFromDate(start),
+    endKey: todayKeyFromDate(end),
+  };
 }
 
 function createFirstWeekAccess(now = new Date()): ComplimentaryAccess {
@@ -1399,9 +1540,14 @@ function hasTranqlyAccess(premium: boolean, access?: ComplimentaryAccess | null)
   return premium || hasActiveComplimentaryAccess(access);
 }
 
-function isThemeUnlocked(theme: (typeof SANCTUARY_THEMES)[number], checkInCount: number, premium = false) {
+function isThemeUnlocked(
+  theme: (typeof SANCTUARY_THEMES)[number],
+  checkInCount: number,
+  premium = false,
+  seasonalUnlocked = false
+) {
   if (theme.unlockType === "plus") return premium;
-  if (theme.unlockType === "seasonal") return false;
+  if (theme.unlockType === "seasonal") return seasonalUnlocked;
   return checkInCount >= theme.unlockDays;
 }
 
@@ -1423,8 +1569,9 @@ function sanctuaryThemesByUnlock() {
 function themeProgressLabel(theme: (typeof SANCTUARY_THEMES)[number], checkInCount: number, premium = false) {
   if (isThemeUnlocked(theme, checkInCount, premium)) return "Unlocked";
   if (theme.unlockType === "plus") return "Tranqly Plus";
-  if (theme.unlockType === "seasonal") return "Seasonal theme";
-  return `Unlocks at ${theme.unlockDays} reflection days`;
+  if (theme.unlockType === "seasonal") return "Available during seasonal events";
+  const remaining = Math.max(0, theme.unlockDays - checkInCount);
+  return `${Math.min(checkInCount, theme.unlockDays)} / ${theme.unlockDays} Reflection Days | ${remaining} to go`;
 }
 
 function growthNoticeFor(previousCount: number, nextCount: number) {
@@ -2743,6 +2890,54 @@ class AppErrorBoundary extends Component<{ children: ReactNode }, { failed: bool
   }
 }
 
+function GoogleAccountButton({
+  busy,
+  borderColor,
+  textColor,
+  onCredential,
+  onError,
+}: {
+  busy: boolean;
+  borderColor: string;
+  textColor: string;
+  onCredential: (idToken: string, accessToken?: string) => void;
+  onError: (message: string) => void;
+}) {
+  const [request, response, promptAsync] = Google.useAuthRequest({
+    iosClientId: GOOGLE_IOS_CLIENT_ID,
+    webClientId: GOOGLE_WEB_CLIENT_ID,
+    selectAccount: true,
+  });
+  const handledResponseRef = useRef<typeof response>(null);
+
+  useEffect(() => {
+    if (!response || handledResponseRef.current === response) return;
+    handledResponseRef.current = response;
+    if (response.type !== "success") {
+      if (response.type === "error") onError("Google sign in could not be completed.");
+      return;
+    }
+    const idToken = response.authentication?.idToken || response.params?.id_token;
+    const accessToken = response.authentication?.accessToken || response.params?.access_token;
+    if (!idToken) {
+      onError("Google did not return a valid sign-in token.");
+      return;
+    }
+    onCredential(idToken, accessToken);
+  }, [onCredential, onError, response]);
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      disabled={!request || busy}
+      onPress={() => void promptAsync()}
+      style={[styles.authSecondaryButton, { borderColor, opacity: !request || busy ? 0.55 : 1 }]}
+    >
+      <Text style={[styles.authSecondaryText, { color: textColor }]}>{busy ? "Connecting..." : "Continue with Google"}</Text>
+    </Pressable>
+  );
+}
+
 function TranqlyApp() {
   const isAdminRoute =
     Platform.OS === "web" &&
@@ -2777,14 +2972,22 @@ function TranqlyApp() {
   const [moods, setMoods] = useState<Record<string, string>>({});
   const [lastDeepInsight, setLastDeepInsight] = useState<DeepInsight | null>(null);
   const [weeklyInsights, setWeeklyInsights] = useState<DeepInsight[]>([]);
+  const [weeklyGenerating, setWeeklyGenerating] = useState(false);
+  const weeklyGenerationKeyRef = useRef<string | null>(null);
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettings>(DEFAULT_NOTIFICATION_SETTINGS);
   const [sanctuaryUnlockNotifications, setSanctuaryUnlockNotifications] = useState<Record<string, string | null>>({});
+  const [seasonalSanctuaryUnlocks, setSeasonalSanctuaryUnlocks] = useState<Record<string, string>>({});
   const [authUser, setAuthUser] = useState<MobileAuthUser | null>(null);
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [showEmailAuth, setShowEmailAuth] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
   const [authNotice, setAuthNotice] = useState("");
+  const [supportCategory, setSupportCategory] = useState<MobileSupportCategory>("bug");
+  const [supportSubject, setSupportSubject] = useState("");
+  const [supportMessage, setSupportMessage] = useState("");
+  const [supportBusy, setSupportBusy] = useState(false);
+  const [supportNotice, setSupportNotice] = useState("");
   const [coachModal, setCoachModal] = useState<{ text: string; reply: CoachReply } | null>(null);
   const [responseFeedbackOpen, setResponseFeedbackOpen] = useState(false);
   const [responseFeedbackText, setResponseFeedbackText] = useState("");
@@ -2816,11 +3019,11 @@ function TranqlyApp() {
   const [showSanctuaryModal, setShowSanctuaryModal] = useState(false);
   const [showAllReflections, setShowAllReflections] = useState(false);
   const [checkoutBusy, setCheckoutBusy] = useState(false);
-  const [sanctuaryTheme, setSanctuaryTheme] = useState<SanctuaryThemeKey>("twilight");
-  const [draftSanctuaryTheme, setDraftSanctuaryTheme] = useState<SanctuaryThemeKey>("twilight");
+  const [sanctuaryTheme, setSanctuaryTheme] = useState<SanctuaryThemeKey>("cloud");
+  const [draftSanctuaryTheme, setDraftSanctuaryTheme] = useState<SanctuaryThemeKey>("cloud");
   const [showThemePreview, setShowThemePreview] = useState(false);
   const [showThemePicker, setShowThemePicker] = useState(false);
-  const [sanctuaryDetailTheme, setSanctuaryDetailTheme] = useState<SanctuaryThemeKey>("twilight");
+  const [sanctuaryDetailTheme, setSanctuaryDetailTheme] = useState<SanctuaryThemeKey>("cloud");
   const [growthNotice, setGrowthNotice] = useState("");
   const [newlyUnlockedSanctuary, setNewlyUnlockedSanctuary] = useState<SanctuaryThemeKey | null>(null);
   const [showNotificationPrompt, setShowNotificationPrompt] = useState(false);
@@ -2847,11 +3050,14 @@ function TranqlyApp() {
           setCoachUsage(parsed.coachUsage || { dateKey: todayKey(), count: 0 });
           setMoods(parsed.moods || {});
           const storedInsight = parsed.lastDeepInsight?.isDemo ? null : parsed.lastDeepInsight || null;
-          const storedWeeklyInsights = (parsed.weeklyInsights || []).filter((insight) => !insight.isDemo);
+          const storedWeeklyInsights = (parsed.weeklyInsights || []).filter(
+            (insight) => !insight.isDemo && Boolean(insight.weekStart)
+          );
           setLastDeepInsight(storedInsight);
-          setWeeklyInsights(dedupeMobileWeeklyInsights(storedWeeklyInsights.length ? storedWeeklyInsights : storedInsight ? [storedInsight] : []));
+          setWeeklyInsights(dedupeMobileWeeklyInsights(storedWeeklyInsights));
           setNotificationSettings({ ...DEFAULT_NOTIFICATION_SETTINGS, ...(parsed.notificationSettings || {}) });
           setSanctuaryUnlockNotifications(parsed.sanctuaryUnlockNotifications || {});
+          setSeasonalSanctuaryUnlocks(parsed.seasonalSanctuaryUnlocks || {});
           setAuthUser(parsed.authUser || null);
           setAuthEmail(parsed.authUser?.email || "");
           setDisplayName(parsed.displayName || "");
@@ -2874,8 +3080,8 @@ function TranqlyApp() {
           setJourneyCoachMarkSeen(parsed.journeyCoachMarkSeen ?? false);
           setSanctuaryCoachMarkSeen(parsed.sanctuaryCoachMarkSeen ?? false);
           setComplimentaryAccess(parsed.complimentaryAccess?.isDemo ? null : normalizeComplimentaryAccess(parsed.complimentaryAccess));
-          setSanctuaryTheme(parsed.sanctuaryTheme || "twilight");
-          setDraftSanctuaryTheme(parsed.sanctuaryTheme || "twilight");
+          setSanctuaryTheme(parsed.sanctuaryTheme || "cloud");
+          setDraftSanctuaryTheme(parsed.sanctuaryTheme || "cloud");
         } catch {}
       setStorageLoaded(true);
     });
@@ -2890,6 +3096,15 @@ function TranqlyApp() {
   useEffect(() => {
     setNotificationDraft(notificationSettings);
   }, [notificationSettings]);
+
+  useEffect(() => {
+    if (!storageLoaded || new Date().getMonth() !== 11 || seasonalSanctuaryUnlocks.snowfall) return;
+    setSeasonalSanctuaryUnlocks((current) => ({
+      ...current,
+      snowfall: new Date().toISOString(),
+    }));
+    setNewlyUnlockedSanctuary("snowfall");
+  }, [seasonalSanctuaryUnlocks.snowfall, storageLoaded]);
 
   useEffect(() => {
     if (!storageLoaded || !complimentaryAccess || complimentaryAccess.status !== "active") return;
@@ -2916,6 +3131,7 @@ function TranqlyApp() {
       weeklyInsights,
       notificationSettings,
       sanctuaryUnlockNotifications,
+      seasonalSanctuaryUnlocks,
       authUser,
       displayName,
       sanctuaryTheme,
@@ -2942,6 +3158,7 @@ function TranqlyApp() {
     weeklyInsights,
     notificationSettings,
     sanctuaryUnlockNotifications,
+    seasonalSanctuaryUnlocks,
     authUser,
     displayName,
     sanctuaryTheme,
@@ -3547,7 +3764,6 @@ function TranqlyApp() {
 
     const di: DeepInsight = localDeepInsight(trimmed);
     setLastDeepInsight(di);
-    setWeeklyInsights((current) => dedupeMobileWeeklyInsights([di, ...current]));
 
     setCheckIns((prev) => prev.map((c) => c.id === entry.id ? entry : c));
     setPending(false);
@@ -3578,10 +3794,11 @@ function TranqlyApp() {
   }, [grouped, showAllReflections]);
 
   const today = todayKey();
+  const effectivePremium = hasTranqlyAccess(premium, complimentaryAccess);
   const weekCheckInCount = useMemo(() => {
     const now = new Date();
     const start = new Date(now);
-    start.setDate(now.getDate() - now.getDay());
+    start.setDate(now.getDate() - ((now.getDay() + 6) % 7));
     const startKey = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}-${String(start.getDate()).padStart(2, "0")}`;
     return new Set(
       checkIns
@@ -3589,6 +3806,103 @@ function TranqlyApp() {
         .map((c) => c.dateKey)
     ).size;
   }, [checkIns]);
+
+  useEffect(() => {
+    if (!storageLoaded || !API_BASE_URL || checkIns.length === 0) return;
+    const normalizedAccess = normalizeComplimentaryAccess(complimentaryAccess);
+    const firstWeekNeedsReflection = Boolean(
+      normalizedAccess &&
+        normalizedAccess.status !== "active" &&
+        !normalizedAccess.weeklyReflectionDeliveredAt
+    );
+    if (!effectivePremium && !firstWeekNeedsReflection) return;
+    const period = firstWeekNeedsReflection && normalizedAccess
+      ? {
+          start: new Date(normalizedAccess.startedAt),
+          end: new Date(normalizedAccess.endsAt),
+          startKey: todayKeyFromDate(new Date(normalizedAccess.startedAt)),
+          endKey: todayKeyFromDate(new Date(normalizedAccess.endsAt)),
+        }
+      : latestCompletedWeeklyPeriod();
+    if (weeklyInsights.some((insight) => insight.weekStart === period.startKey)) return;
+    if (weeklyGenerationKeyRef.current === period.startKey) return;
+    const periodEntries = checkIns.filter(
+      (entry) => entry.dateKey >= period.startKey && entry.dateKey <= period.endKey
+    );
+    const reflectionDays = new Set(periodEntries.map((entry) => entry.dateKey)).size;
+    if (reflectionDays < 3) return;
+
+    weeklyGenerationKeyRef.current = period.startKey;
+    setWeeklyGenerating(true);
+    void (async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/analyze`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: displayName.trim() || undefined,
+            streak: currentStreak(checkIns),
+            totalEntries: checkIns.length,
+            recentEntries: periodEntries.slice(0, 14).map((entry) => ({
+              text: entry.text,
+              dateKey: entry.dateKey,
+              prompt: entry.prompt,
+              dailyInsight: entry.reply?.message,
+            })),
+            recentMoods: Object.entries(moods)
+              .filter(([dateKey]) => dateKey >= period.startKey && dateKey <= period.endKey)
+              .map(([dateKey, mood]) => ({ dateKey, mood })),
+            periodStart: period.startKey,
+            periodEnd: period.endKey,
+            reflectionDays,
+            userId: authUser?.localId,
+            userPlan: effectivePremium ? "plus" : "free",
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok || data.fallback || !data.insight) {
+          throw new Error(data.error || "Weekly reflection was not available yet.");
+        }
+        const insight: DeepInsight = {
+          headline: data.headline || "Your week in reflection",
+          insight: data.insight,
+          suggestion: data.suggestion || data.next_focus || "Carry one small steadying moment into the week ahead.",
+          affirmation: data.affirmation || "A few honest reflections can still reveal something worth noticing.",
+          createdAt: new Date().toISOString(),
+          weekStart: period.startKey,
+          weekEnd: period.endKey,
+          gentleFocusTitle: data.gentleFocusTitle || "Next gentle focus",
+          evidenceLevel: data.evidenceLevel,
+          completionMessage: data.completionMessage,
+          reflectionDays,
+          reflectionCount: periodEntries.length,
+          rewardUnlocked: false,
+          rewardId: undefined,
+        };
+        setWeeklyInsights((current) => dedupeMobileWeeklyInsights([insight, ...current]));
+        if (firstWeekNeedsReflection) {
+          setComplimentaryAccess((current) => current ? {
+            ...current,
+            weeklyReflectionDeliveredAt: new Date().toISOString(),
+          } : current);
+        }
+      } catch (error) {
+        weeklyGenerationKeyRef.current = null;
+        if (__DEV__) console.warn("Weekly reflection generation failed", error);
+      } finally {
+        setWeeklyGenerating(false);
+      }
+    })();
+  }, [
+    authUser?.localId,
+    checkIns,
+    complimentaryAccess,
+    displayName,
+    effectivePremium,
+    moods,
+    storageLoaded,
+    weeklyInsights,
+  ]);
   const monthStats = useMemo(() => {
     const now = new Date();
     const monthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -3644,6 +3958,172 @@ function TranqlyApp() {
   function openPremium() {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setShowPremiumModal(true);
+  }
+
+  async function validMobileAuthUser() {
+    if (!authUser) throw new Error("Sign in before contacting support.");
+    if (authUser.expiresAt > Date.now() + 60_000) return authUser;
+    if (!FIREBASE_API_KEY || !authUser.refreshToken) {
+      throw new Error("Your sign-in expired. Sign in again to continue.");
+    }
+
+    const response = await fetch(
+      `https://securetoken.googleapis.com/v1/token?key=${FIREBASE_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: `grant_type=refresh_token&refresh_token=${encodeURIComponent(authUser.refreshToken)}`,
+      }
+    );
+    const data = await response.json();
+    if (!response.ok || !data.id_token) {
+      setAuthUser(null);
+      throw new Error("Your sign-in expired. Sign in again to continue.");
+    }
+    const refreshed: MobileAuthUser = {
+      ...authUser,
+      localId: data.user_id || authUser.localId,
+      idToken: data.id_token,
+      refreshToken: data.refresh_token || authUser.refreshToken,
+      expiresAt: Date.now() + Number(data.expires_in || 3600) * 1000,
+    };
+    setAuthUser(refreshed);
+    return refreshed;
+  }
+
+  async function submitMobileSupportTicket() {
+    Keyboard.dismiss();
+    setSupportNotice("");
+    if (!authUser) {
+      setSupportNotice("Sign in above before submitting a support ticket.");
+      return;
+    }
+    if (!supportSubject.trim() || !supportMessage.trim()) {
+      setSupportNotice("Add a subject and message before submitting.");
+      return;
+    }
+    if (!FIREBASE_PROJECT_ID) {
+      setSupportNotice("Support is not configured in this build. Email support@tranqly.com instead.");
+      return;
+    }
+
+    setSupportBusy(true);
+    try {
+      const user = await validMobileAuthUser();
+      await createMobileSupportTicket(
+        { projectId: FIREBASE_PROJECT_ID, idToken: user.idToken },
+        {
+          uid: user.localId,
+          email: user.email,
+          subject: supportSubject,
+          message: supportMessage,
+          category: supportCategory,
+          appVersion: Constants.expoConfig?.version || "1.0.0",
+          osVersion: String(Platform.Version),
+        }
+      );
+      setSupportSubject("");
+      setSupportMessage("");
+      setSupportNotice("Ticket submitted. You can follow up at support@tranqly.com.");
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not submit the ticket.";
+      setSupportNotice(message);
+      logMobileApiError({
+        errorCode: "support_ticket_failed",
+        errorMessage: message,
+        featureArea: "support",
+      });
+    } finally {
+      setSupportBusy(false);
+    }
+  }
+
+  function applyFirebaseAuthResult(data: Record<string, any>, fallbackEmail = "") {
+    const user: MobileAuthUser = {
+      email: data.email || fallbackEmail || "Connected account",
+      localId: data.localId,
+      idToken: data.idToken,
+      refreshToken: data.refreshToken,
+      expiresAt: Date.now() + Number(data.expiresIn || 3600) * 1000,
+    };
+    setAuthUser(user);
+    setAuthEmail(data.email || fallbackEmail || "");
+    setShowEmailAuth(false);
+    setAuthNotice("Signed in. This device is linked to your Tranqly account.");
+  }
+
+  async function signInWithFirebaseProvider(
+    providerId: "apple.com" | "google.com",
+    idToken: string,
+    options?: { accessToken?: string; nonce?: string; fallbackEmail?: string }
+  ) {
+    if (!FIREBASE_API_KEY) throw new Error("Firebase is not configured for this build.");
+    const parameters = [
+      `id_token=${encodeURIComponent(idToken)}`,
+      options?.accessToken ? `access_token=${encodeURIComponent(options.accessToken)}` : "",
+      options?.nonce ? `nonce=${encodeURIComponent(options.nonce)}` : "",
+      `providerId=${encodeURIComponent(providerId)}`,
+    ].filter(Boolean);
+    const response = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithIdp?key=${FIREBASE_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requestUri: "https://tranqly.app",
+          postBody: parameters.join("&"),
+          returnIdpCredential: true,
+          returnSecureToken: true,
+        }),
+      }
+    );
+    const data = await response.json();
+    if (!response.ok) throw new Error(data?.error?.message || "FEDERATED_AUTH_FAILED");
+    applyFirebaseAuthResult(data, options?.fallbackEmail);
+  }
+
+  async function signInWithApple() {
+    setAuthBusy(true);
+    setAuthNotice("");
+    try {
+      if (!(await AppleAuthentication.isAvailableAsync())) {
+        throw new Error("Apple Sign In is not available on this device.");
+      }
+      const rawNonce = Crypto.randomUUID();
+      const hashedNonce = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, rawNonce);
+      const credential = await AppleAuthentication.signInAsync({
+        requestedScopes: [
+          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+          AppleAuthentication.AppleAuthenticationScope.EMAIL,
+        ],
+        nonce: hashedNonce,
+      });
+      if (!credential.identityToken) throw new Error("Apple did not return a valid sign-in token.");
+      await signInWithFirebaseProvider("apple.com", credential.identityToken, {
+        nonce: rawNonce,
+        fallbackEmail: credential.email || "Apple account",
+      });
+      const appleName = [credential.fullName?.givenName, credential.fullName?.familyName].filter(Boolean).join(" ").trim();
+      if (appleName && !displayName.trim()) setDisplayName(appleName);
+    } catch (error) {
+      const code = (error as { code?: string })?.code;
+      if (code !== "ERR_REQUEST_CANCELED") setAuthNotice(mobileAuthErrorMessage(error));
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function signInWithGoogleCredential(idToken: string, accessToken?: string) {
+    setAuthBusy(true);
+    setAuthNotice("");
+    try {
+      await signInWithFirebaseProvider("google.com", idToken, { accessToken });
+    } catch (error) {
+      setAuthNotice(mobileAuthErrorMessage(error));
+    } finally {
+      setAuthBusy(false);
+    }
   }
 
   function pressBottomTab(nextTab: Tab) {
@@ -3849,6 +4329,15 @@ function TranqlyApp() {
 
   const streak = currentStreak(checkIns);
   const totalReflectionDays = qualifyingReflectionDays(checkIns);
+  const isSanctuaryThemeUnlocked = (theme: (typeof SANCTUARY_THEMES)[number]) =>
+    isThemeUnlocked(
+      theme,
+      totalReflectionDays,
+      effectivePremium,
+      Boolean(seasonalSanctuaryUnlocks[theme.key])
+    );
+  const sanctuaryThemeProgressLabel = (theme: (typeof SANCTUARY_THEMES)[number]) =>
+    isSanctuaryThemeUnlocked(theme) ? "Unlocked" : themeProgressLabel(theme, totalReflectionDays, effectivePremium);
   const weeklyReflectionDays = Math.min(7, currentWeekReflectionDays(checkIns));
   const notificationStatusLabel = notificationSettings.permissionStatus === "unknown"
     ? "Permission Needed"
@@ -3865,7 +4354,6 @@ function TranqlyApp() {
   const selectedSanctuary = getSanctuaryTheme(sanctuaryTheme);
   const detailSanctuary = getSanctuaryTheme(sanctuaryDetailTheme);
   const forestHavenReward = getSanctuaryTheme("forest");
-  const effectivePremium = hasTranqlyAccess(premium, complimentaryAccess);
   const showFirstWeekCompleteModal = Boolean(
     onboardingCompleted &&
       !premium &&
@@ -3877,6 +4365,71 @@ function TranqlyApp() {
     !premium &&
     complimentaryAccess &&
     (complimentaryAccess.status === "completed" || complimentaryAccess.status === "expired");
+
+  useEffect(() => {
+    if (!storageLoaded || isSanctuaryThemeUnlocked(getSanctuaryTheme(sanctuaryTheme))) return;
+    setSanctuaryTheme("cloud");
+    setDraftSanctuaryTheme("cloud");
+  }, [effectivePremium, sanctuaryTheme, seasonalSanctuaryUnlocks, storageLoaded, totalReflectionDays]);
+
+  useEffect(() => {
+    if (!storageLoaded || !authUser || !FIREBASE_PROJECT_ID) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const user = await validMobileAuthUser();
+          if (cancelled) return;
+          await syncMobileUserProfile(
+            { projectId: FIREBASE_PROJECT_ID, idToken: user.idToken },
+            {
+              uid: user.localId,
+              email: user.email,
+              displayName: displayName.trim() || null,
+              onboardingCompleted,
+              onboardingCoachStep,
+              onboardingSkippedAt,
+              onboardingCompletedAt: onboardingCoachCompletedAt,
+              subscriptionStatus: effectivePremium ? "active" : "free",
+              plan: effectivePremium ? "premium" : "free",
+              appVersion: Constants.expoConfig?.version || "1.0.0",
+              osVersion: String(Platform.Version),
+              selectedTheme: sanctuaryTheme,
+              streakCount: streak,
+              reflectionCount: checkIns.length,
+              lastReflectionAt: checkIns[0]?.createdAt ?? null,
+            }
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Mobile profile sync failed";
+          if (__DEV__) console.warn("Mobile profile sync failed", message);
+          logMobileApiError({
+            errorCode: "mobile_profile_sync_failed",
+            errorMessage: message,
+            featureArea: "account_sync",
+          });
+        }
+      })();
+    }, 800);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [
+    authUser?.localId,
+    checkIns.length,
+    displayName,
+    effectivePremium,
+    onboardingCoachCompletedAt,
+    onboardingCoachStep,
+    onboardingCompleted,
+    onboardingSkippedAt,
+    sanctuaryTheme,
+    storageLoaded,
+    streak,
+  ]);
+
   const firstWeekEntries = complimentaryAccess
     ? checkIns.filter((entry) => {
         const time = new Date(entry.createdAt).getTime();
@@ -3884,14 +4437,16 @@ function TranqlyApp() {
       })
     : [];
   const firstWeekReflectionDays = new Set(firstWeekEntries.map((entry) => entry.dateKey)).size;
-  const firstWeekInsight = weeklyInsights[0] ?? lastDeepInsight;
+  const firstWeekInsight = weeklyInsights[0] ?? null;
   const firstWeekSummaryItems = firstWeekReflectionDays >= 7
     ? ["7 reflection days", "1 weekly reflection", "Forest Haven unlocked"]
-    : firstWeekReflectionDays >= 2
+    : firstWeekReflectionDays >= 3
       ? [`${firstWeekReflectionDays} reflection days`, "1 weekly reflection", "A few themes noticed"]
+      : firstWeekReflectionDays === 2
+        ? ["2 reflection days", "Weekly reflection still building", "A theme beginning to form"]
       : firstWeekReflectionDays === 1
-        ? ["1 reflection day", "1 weekly reflection", "1 moment worth revisiting"]
-        : ["Your space is still here", "1 gentle weekly note"];
+        ? ["1 reflection day", "Weekly reflection still building", "1 moment worth revisiting"]
+        : ["Your space is still here", "Your weekly reflection is waiting to begin"];
   const firstWeekReflectionText = (firstWeekInsight?.insight ??
     (firstWeekEntries.length
       ? "You took time to check in with yourself this week. What you shared may not form a full pattern yet, but it still gives you something meaningful to return to."
@@ -4567,28 +5122,36 @@ function TranqlyApp() {
                   </Text>
                 </View>
                 <Text style={[styles.fitWeeklyProgressText, { color: appTheme.dim }]}>
-                  {weekCheckInCount >= 7 ? "Your weekly reflection is ready." : weekCheckInCount === 0 ? "Your weekly reflection will begin building after your first reflection." : "Your weekly reflection is still building."}
+                  {weeklyGenerating
+                    ? "Tranqly is preparing your weekly reflection."
+                    : weeklyInsights.length
+                      ? "Your latest weekly reflection is ready."
+                      : weekCheckInCount >= 3
+                        ? "You have shared enough to notice meaningful themes. Your reflection arrives Sunday."
+                        : weekCheckInCount === 0
+                          ? "Your weekly reflection will begin building after your first reflection."
+                          : "Your weekly reflection is still building. A few more check-ins will help Tranqly uncover meaningful patterns."}
                 </Text>
-                <View style={styles.fitWeeklyProgress} accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 7, now: Math.min(7, weekCheckInCount) }} accessibilityLabel={`Weekly Reflection, ${Math.min(7, weekCheckInCount)} of 7 complete`}>
-                  {Array.from({ length: 7 }, (_, index) => (
+                <View style={styles.fitWeeklyProgress} accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 3, now: Math.min(3, weekCheckInCount) }} accessibilityLabel={`Weekly Reflection, ${Math.min(3, weekCheckInCount)} of 3 Reflection Days`}>
+                  {Array.from({ length: 3 }, (_, index) => (
                     <View
                       key={index}
                       style={[
                         styles.fitWeeklyProgressSegment,
                         { backgroundColor: appTheme.ink },
-                        index < Math.min(7, weekCheckInCount) && { backgroundColor: appTheme.accent },
+                        index < Math.min(3, weekCheckInCount) && { backgroundColor: appTheme.accent },
                       ]}
                     />
                   ))}
                 </View>
                 <Text style={[styles.fitWeeklyProgressText, { color: appTheme.fg }]}>
-                  {Math.min(7, weekCheckInCount)} of 7 complete
+                  {weekCheckInCount} Reflection Day{weekCheckInCount === 1 ? "" : "s"} this week
                 </Text>
-                {weekCheckInCount >= 7 ? (
+                {weeklyInsights.length ? (
                   <Pressable
                     onPress={() => {
                       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                      setSelectedWeeklyInsight(weeklyInsights[0] ?? lastDeepInsight);
+                      setSelectedWeeklyInsight(weeklyInsights[0]);
                       setShowJourneyDeepInsight(true);
                     }}
                     style={[styles.fitWeeklyButton, { backgroundColor: appTheme.button }]}
@@ -4852,12 +5415,12 @@ function TranqlyApp() {
                   <View>
                     <Text style={[styles.journeySectionTitle, themedAccent2]}>Your Sanctuaries</Text>
                     <Text style={[styles.journeyCardText, themedBody]}>
-                      {PRIMARY_SANCTUARY_KEYS.filter((key) => isThemeUnlocked(getSanctuaryTheme(key), totalReflectionDays, effectivePremium)).length} of 5 discovered
+                      {PRIMARY_SANCTUARY_KEYS.filter((key) => isSanctuaryThemeUnlocked(getSanctuaryTheme(key))).length} of {PRIMARY_SANCTUARY_KEYS.length} discovered
                     </Text>
                   </View>
                   <Text style={[styles.inlinePremiumLink, themedAccent]}>View all</Text>
                 </View>
-                <Text style={[styles.youCardMuted, themedMuted, { marginTop: 8 }]}>Every 7 reflection days reveals a new sanctuary. Missing a day never removes your progress.</Text>
+                <Text style={[styles.youCardMuted, themedMuted, { marginTop: 8 }]}>Every 7 lifetime Reflection Days reveals a new sanctuary. Multiple reflections in one day count once, and missing a day never removes progress.</Text>
                 {upcomingSanctuary ? (
                   <View style={[styles.authSummaryCard, themedInk, { marginTop: 12 }]}> 
                     <Text style={[styles.authSummaryLabel, themedAccent2]}>Next sanctuary</Text>
@@ -4876,28 +5439,31 @@ function TranqlyApp() {
               <Pressable
                 style={[styles.journeyPremiumCard, themedWeekly]}
                 onPress={() => {
-                  if (!weeklyInsights.length && !lastDeepInsight) {
-                    openPremium();
-                    return;
-                  }
-                  setSelectedWeeklyInsight(weeklyInsights[0] ?? lastDeepInsight);
+                  if (!weeklyInsights.length) return;
+                  setSelectedWeeklyInsight(weeklyInsights[0]);
                   setShowJourneyDeepInsight(true);
                 }}
               >
                 <View style={styles.premiumHeader}>
                   <View>
                     <Text style={[styles.journeySectionTitle, themedAccent2]}>Weekly Reflection</Text>
-                    <Text style={[styles.journeyCardText, themedBody]}>{weeklyReflectionDays === 7 ? "Your weekly reflection is ready." : "Your weekly reflection is still building."}</Text>
+                    <Text style={[styles.journeyCardText, themedBody]}>
+                      {weeklyInsights.length
+                        ? "Your latest weekly reflection is ready."
+                        : weeklyReflectionDays >= 3
+                          ? "Your weekly reflection arrives Sunday."
+                          : "Your weekly reflection is still building. A few more check-ins will help Tranqly uncover meaningful patterns."}
+                    </Text>
                   </View>
                   <Text style={[styles.youCardMuted, themedMuted]}>Sunday</Text>
                 </View>
                 <View style={styles.fitWeeklyProgress}>
-                  {Array.from({ length: 7 }, (_, index) => {
+                  {Array.from({ length: 3 }, (_, index) => {
                     return <View key={index} style={[styles.fitWeeklyProgressSegment, { backgroundColor: index < weeklyReflectionDays ? appTheme.accent : appTheme.ink }]} />;
                   })}
                 </View>
-                <Text style={[styles.youCardMuted, themedMuted]}>{weeklyReflectionDays} of 7 complete</Text>
-                {weeklyInsights.length || lastDeepInsight ? (
+                <Text style={[styles.youCardMuted, themedMuted]}>{weeklyReflectionDays} Reflection Day{weeklyReflectionDays === 1 ? "" : "s"} this week</Text>
+                {weeklyInsights.length ? (
                   <Text style={[styles.inlinePremiumLink, themedAccent]}>{weeklyInsights.length > 1 ? "View Weekly Reflection History" : "Read Weekly Reflection"}</Text>
                 ) : null}
               </Pressable>
@@ -5157,6 +5723,31 @@ function TranqlyApp() {
                   </View>
                 ) : (
                   <View style={styles.authForm}>
+                    {Platform.OS === "ios" ? (
+                      <AppleAuthentication.AppleAuthenticationButton
+                        buttonType={AppleAuthentication.AppleAuthenticationButtonType.CONTINUE}
+                        buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.WHITE}
+                        cornerRadius={14}
+                        style={{ width: "100%", height: 50, opacity: authBusy ? 0.55 : 1 }}
+                        onPress={() => void signInWithApple()}
+                      />
+                    ) : null}
+                    {(Platform.OS === "ios" && GOOGLE_IOS_CLIENT_ID) || (Platform.OS === "web" && GOOGLE_WEB_CLIENT_ID) ? (
+                      <GoogleAccountButton
+                        busy={authBusy}
+                        borderColor={appTheme.edge}
+                        textColor={appTheme.fg}
+                        onCredential={(idToken, accessToken) => void signInWithGoogleCredential(idToken, accessToken)}
+                        onError={setAuthNotice}
+                      />
+                    ) : (
+                      <Pressable
+                        style={[styles.authSecondaryButton, { borderColor: appTheme.edge }]}
+                        onPress={() => setAuthNotice("Google Sign In needs its public OAuth client ID in this build.")}
+                      >
+                        <Text style={[styles.authSecondaryText, themedAccent]}>Continue with Google</Text>
+                      </Pressable>
+                    )}
                     <Pressable
                       style={[styles.authPrimaryButton, { backgroundColor: appTheme.button }]}
                       onPress={() => {
@@ -5496,9 +6087,9 @@ function TranqlyApp() {
                     <ScrollView testID="theme-picker-scroll" showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 18 }}>
                       {[
                         ["Current", sanctuaryThemesByUnlock().filter((theme) => theme.key === sanctuaryTheme)],
-                        ["Available", sanctuaryThemesByUnlock().filter((theme) => theme.key !== sanctuaryTheme && isThemeUnlocked(theme, totalReflectionDays, effectivePremium))],
-                        ["Growing", sanctuaryThemesByUnlock().filter((theme) => theme.unlockType === "reflections" && !isThemeUnlocked(theme, totalReflectionDays, effectivePremium)).slice(0, 2)],
-                        ["Locked", sanctuaryThemesByUnlock().filter((theme) => theme.unlockType === "reflections" && !isThemeUnlocked(theme, totalReflectionDays, effectivePremium)).slice(2)],
+                        ["Available", sanctuaryThemesByUnlock().filter((theme) => theme.key !== sanctuaryTheme && theme.unlockType !== "seasonal" && isSanctuaryThemeUnlocked(theme))],
+                        ["Growing", sanctuaryThemesByUnlock().filter((theme) => theme.unlockType === "reflections" && !isSanctuaryThemeUnlocked(theme)).slice(0, 2)],
+                        ["Locked", sanctuaryThemesByUnlock().filter((theme) => theme.unlockType === "reflections" && !isSanctuaryThemeUnlocked(theme)).slice(2)],
                         ["Seasonal", sanctuaryThemesByUnlock().filter((theme) => theme.unlockType === "seasonal")],
                       ].map(([label, rawThemes]) => {
                         const themes = rawThemes as typeof SANCTUARY_THEMES;
@@ -5508,7 +6099,7 @@ function TranqlyApp() {
                             <Text style={[styles.youSectionTitle, themedAccent2]}>{label as string}</Text>
                             <View style={styles.themePickerGrid}>
                               {themes.map((theme) => {
-                                const unlocked = isThemeUnlocked(theme, totalReflectionDays, effectivePremium);
+                                const unlocked = isSanctuaryThemeUnlocked(theme);
                                 return (
                                   <Pressable
                                     key={theme.key}
@@ -5529,8 +6120,24 @@ function TranqlyApp() {
                                       <ThemeIcon type={theme.key} color={theme.accent} size={22} />
                                       <Text style={styles.themePickerTileTitle}>{theme.label}</Text>
                                       <Text style={styles.themePickerTileSub} numberOfLines={1}>
-                                        {unlocked ? theme.feeling : themeProgressLabel(theme, totalReflectionDays, effectivePremium)}
+                                        {unlocked ? theme.feeling : sanctuaryThemeProgressLabel(theme)}
                                       </Text>
+                                      {!unlocked && theme.unlockType === "reflections" ? (
+                                        <View
+                                          accessibilityRole="progressbar"
+                                          accessibilityValue={{ min: 0, max: theme.unlockDays, now: Math.min(totalReflectionDays, theme.unlockDays) }}
+                                          style={{ height: 4, borderRadius: 2, overflow: "hidden", backgroundColor: "rgba(255,255,255,0.14)", marginTop: 7 }}
+                                        >
+                                          <View
+                                            style={{
+                                              width: `${Math.min(100, (totalReflectionDays / Math.max(1, theme.unlockDays)) * 100)}%`,
+                                              height: "100%",
+                                              borderRadius: 2,
+                                              backgroundColor: theme.accent,
+                                            }}
+                                          />
+                                        </View>
+                                      ) : null}
                                       <View style={styles.themePickerActions}>
                                         <Pressable
                                           onPress={(event) => {
@@ -5628,25 +6235,25 @@ function TranqlyApp() {
                           </View>
                           <Pressable
                             onPress={() => {
-                              if (!isThemeUnlocked(selected, totalReflectionDays, effectivePremium)) return;
+                              if (!isSanctuaryThemeUnlocked(selected)) return;
                               setSanctuaryTheme(selected.key);
                               setDraftSanctuaryTheme(selected.key);
                               setShowThemePreview(false);
                               setShowThemePicker(false);
                             }}
-                            disabled={sanctuaryTheme === selected.key || !isThemeUnlocked(selected, totalReflectionDays, effectivePremium)}
+                            disabled={sanctuaryTheme === selected.key || !isSanctuaryThemeUnlocked(selected)}
                             style={[
                               styles.themeApplyButton,
                               { backgroundColor: appTheme.button },
-                              (sanctuaryTheme === selected.key || !isThemeUnlocked(selected, totalReflectionDays, effectivePremium)) && styles.themeApplyButtonDisabled,
+                              (sanctuaryTheme === selected.key || !isSanctuaryThemeUnlocked(selected)) && styles.themeApplyButtonDisabled,
                             ]}
                           >
                             <Text style={[styles.themeApplyButtonText, themedTitle]}>
                               {sanctuaryTheme === selected.key
                                 ? "Theme applied"
-                                : isThemeUnlocked(selected, totalReflectionDays, effectivePremium)
+                                : isSanctuaryThemeUnlocked(selected)
                                   ? "Select Theme"
-                                  : themeProgressLabel(selected, totalReflectionDays, effectivePremium)}
+                                  : sanctuaryThemeProgressLabel(selected)}
                             </Text>
                           </Pressable>
                         </View>
@@ -5666,6 +6273,94 @@ function TranqlyApp() {
                     First week active until {new Date(complimentaryAccess.endsAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}.
                   </Text>
                 ) : null}
+              </View>
+
+              <View style={[styles.youCard, themedCard]}>
+                <View style={styles.authCardHeader}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.youSectionTitle, themedAccent2]}>Contact & Support</Text>
+                    <Text style={[styles.youCardBody, themedBody]}>
+                      Send account, billing, recording, or app issues to Tranqly. Reflection text is never attached automatically.
+                    </Text>
+                  </View>
+                  <Text style={[styles.authStatusPill, { borderColor: appTheme.edge, color: appTheme.accent }]}>
+                    {authUser ? "Ready" : "Sign In"}
+                  </Text>
+                </View>
+                <View style={styles.authForm}>
+                  <Text style={[styles.youInputLabel, themedTitle]}>What can we help with?</Text>
+                  <View style={styles.supportCategoryWrap}>
+                    {([
+                      ["bug", "App issue"],
+                      ["recording", "Recording"],
+                      ["insights", "Insights"],
+                      ["billing", "Billing"],
+                      ["account", "Account"],
+                      ["feedback", "Feedback"],
+                    ] as [MobileSupportCategory, string][]).map(([value, label]) => {
+                      const selected = supportCategory === value;
+                      return (
+                        <Pressable
+                          key={value}
+                          accessibilityRole="button"
+                          accessibilityState={{ selected }}
+                          onPress={() => setSupportCategory(value)}
+                          style={[
+                            styles.supportCategoryChip,
+                            { borderColor: selected ? appTheme.accent : appTheme.edge },
+                            selected && { backgroundColor: appTheme.helperBg },
+                          ]}
+                        >
+                          <Text style={[styles.supportCategoryText, selected ? themedAccent : themedMuted]}>{label}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                  <TextInput
+                    value={supportSubject}
+                    onChangeText={setSupportSubject}
+                    placeholder="Subject"
+                    placeholderTextColor={appTheme.faint}
+                    maxLength={120}
+                    style={[styles.youInput, themedInk, themedTitle]}
+                  />
+                  <TextInput
+                    value={supportMessage}
+                    onChangeText={setSupportMessage}
+                    placeholder="Describe what happened. Only include reflection text if you choose to."
+                    placeholderTextColor={appTheme.faint}
+                    multiline
+                    textAlignVertical="top"
+                    maxLength={2000}
+                    style={[styles.youInput, styles.supportMessageInput, themedInk, themedTitle]}
+                  />
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={supportBusy || !authUser}
+                    onPress={() => void submitMobileSupportTicket()}
+                    style={[
+                      styles.authPrimaryButton,
+                      { backgroundColor: appTheme.button },
+                      (supportBusy || !authUser) && { opacity: 0.5 },
+                    ]}
+                  >
+                    <Text style={[styles.authPrimaryText, themedTitle]}>
+                      {!authUser ? "Sign in to submit" : supportBusy ? "Submitting..." : "Submit support ticket"}
+                    </Text>
+                  </Pressable>
+                  {supportNotice ? <Text style={[styles.youCardMuted, themedMuted, { marginTop: 0 }]}>{supportNotice}</Text> : null}
+                  <View style={styles.supportLinkRow}>
+                    <Pressable onPress={() => void Linking.openURL("mailto:support@tranqly.com")}>
+                      <Text style={[styles.authMetaText, themedAccent]}>Email support</Text>
+                    </Pressable>
+                    <Pressable onPress={() => void Linking.openURL("https://tranqly.app/privacy")}>
+                      <Text style={[styles.authMetaText, themedMuted]}>Privacy</Text>
+                    </Pressable>
+                    <Pressable onPress={() => void Linking.openURL("https://tranqly.app/terms")}>
+                      <Text style={[styles.authMetaText, themedMuted]}>Terms</Text>
+                    </Pressable>
+                  </View>
+                </View>
               </View>
 
               <View style={[styles.youCard, themedCard]}>
@@ -5689,7 +6384,7 @@ function TranqlyApp() {
                 <Text style={[styles.youCardBody, themedBody]}>A private story of the reflection days, sanctuaries, themes, habits, and patterns that shaped your year.</Text>
                 <View style={[styles.authButtonRow, { marginTop: 12 }]}>
                   <View style={[styles.authSummaryCard, themedInk, { flex: 1 }]}><Text style={[styles.authSummaryValue, themedAccent]}>{totalReflectionDays}</Text><Text style={[styles.youCardMuted, themedMuted]}>Reflection days so far</Text></View>
-                  <View style={[styles.authSummaryCard, themedInk, { flex: 1 }]}><Text style={[styles.authSummaryValue, themedAccent]}>{PRIMARY_SANCTUARY_KEYS.filter((key) => totalReflectionDays >= getSanctuaryTheme(key).unlockDays).length}</Text><Text style={[styles.youCardMuted, themedMuted]}>Sanctuaries discovered</Text></View>
+                  <View style={[styles.authSummaryCard, themedInk, { flex: 1 }]}><Text style={[styles.authSummaryValue, themedAccent]}>{PRIMARY_SANCTUARY_KEYS.filter((key) => isSanctuaryThemeUnlocked(getSanctuaryTheme(key))).length}</Text><Text style={[styles.youCardMuted, themedMuted]}>Sanctuaries discovered</Text></View>
                 </View>
                 <Text style={[styles.youCardMuted, themedMuted]}>Private by default. Shared summaries will not include sensitive reflection details.</Text>
               </View>
@@ -6035,13 +6730,24 @@ function TranqlyApp() {
               <View style={[styles.modalCard, themedCard]}>
                 {newlyUnlockedSanctuary ? (
                   <>
-                    <Text style={[styles.kicker, themedAccent2]}>Sanctuary Unlocked</Text>
+                    <Text style={[styles.kicker, themedAccent2]}>New Sanctuary Unlocked</Text>
                     <Text style={[styles.sanctuaryModalTitle, themedTitle]}>{getSanctuaryTheme(newlyUnlockedSanctuary).label}</Text>
-                    <Text style={[styles.modalMessage, themedBody]}>A new sanctuary is ready to explore.</Text>
+                    <View style={[styles.sanctuaryModalArtworkFrame, { marginTop: 14, height: 220 }]}>
+                      <Image
+                        source={getSanctuaryTheme(newlyUnlockedSanctuary).artwork}
+                        style={styles.sanctuaryModalArtwork}
+                        resizeMode="cover"
+                      />
+                      <LinearGradient colors={["rgba(11,14,20,0)", "rgba(11,14,20,0.72)"]} style={StyleSheet.absoluteFill} />
+                      <Text style={[styles.sanctuaryArtworkText, themedTitle]}>
+                        {getSanctuaryTheme(newlyUnlockedSanctuary).feeling}
+                      </Text>
+                    </View>
+                    <Text style={[styles.modalMessage, themedBody]}>{getSanctuaryTheme(newlyUnlockedSanctuary).description}</Text>
                     <Text style={[styles.youCardMuted, themedMuted]}>You reflected on {totalReflectionDays} different days.</Text>
                     <View style={[styles.authButtonRow, { marginTop: 18 }]}>
                       <Pressable style={[styles.authSecondaryButton, { borderColor: appTheme.edge }]} onPress={() => setNewlyUnlockedSanctuary(null)}>
-                        <Text style={[styles.authSecondaryText, themedAccent]}>Not Now</Text>
+                        <Text style={[styles.authSecondaryText, themedAccent]}>Maybe Later</Text>
                       </Pressable>
                       <Pressable
                         style={[styles.authPrimaryButton, { backgroundColor: appTheme.button }]}
@@ -6081,7 +6787,7 @@ function TranqlyApp() {
                       ) : null}
                       {sanctuaryTheme !== detailSanctuary.key ? (
                         <Text style={[styles.sanctuaryMetaPill, themedMuted]}>
-                          {themeProgressLabel(detailSanctuary, totalReflectionDays, effectivePremium)}
+                          {sanctuaryThemeProgressLabel(detailSanctuary)}
                         </Text>
                       ) : null}
                       <Text style={[styles.sanctuaryMetaPill, themedMuted]}>
@@ -6131,7 +6837,7 @@ function TranqlyApp() {
                     </Text>
                   </View>
 
-                  {isThemeUnlocked(detailSanctuary, totalReflectionDays, effectivePremium) && sanctuaryTheme !== detailSanctuary.key ? (
+                  {isSanctuaryThemeUnlocked(detailSanctuary) && sanctuaryTheme !== detailSanctuary.key ? (
                     <Pressable
                       style={[styles.themeApplyButton, { backgroundColor: appTheme.button, marginBottom: 18 }]}
                       onPress={() => {
@@ -6196,17 +6902,23 @@ function TranqlyApp() {
                 <View style={[styles.weeklyDetailCard, themedInk]}>
                   <Text style={[styles.authSummaryLabel, themedAccent2]}>Weekly Reflection</Text>
                   <Text style={[styles.weeklyModalTitle, themedTitle]}>
-                    {firstWeekInsight?.headline ?? "A few moments from your week"}
+                    {firstWeekReflectionDays >= 3
+                      ? firstWeekInsight?.headline ?? (weeklyGenerating ? "Tranqly is bringing your week together" : "A few moments from your week")
+                      : "Your weekly reflection is still building"}
                   </Text>
                   <Text style={[styles.weeklyModalBody, themedBody]}>
-                    {firstWeekReflectionText}
+                    {firstWeekReflectionDays >= 3
+                      ? firstWeekInsight?.insight ?? (weeklyGenerating ? "Your reflection will appear here in a moment." : firstWeekReflectionText)
+                      : "A few more check-ins will help Tranqly uncover a meaningful pattern. What you already shared will stay here."}
                   </Text>
-                  <View style={[styles.weeklyExperimentBox, { borderColor: appTheme.helperEdge, backgroundColor: appTheme.helperBg }]}>
-                    <Text style={[styles.authSummaryLabel, themedAccent2]}>{firstWeekInsight?.gentleFocusTitle ?? "Next gentle focus"}</Text>
+                  {firstWeekReflectionDays >= 3 ? (
+                    <View style={[styles.weeklyExperimentBox, { borderColor: appTheme.helperEdge, backgroundColor: appTheme.helperBg }]}>
+                      <Text style={[styles.authSummaryLabel, themedAccent2]}>{firstWeekInsight?.gentleFocusTitle ?? "Next gentle focus"}</Text>
                     <Text style={[styles.weeklyModalBody, themedTitle]}>
                       {firstWeekInsight?.suggestion ?? "Notice one moment this week where you feel a little more settled, supported, or clear."}
                     </Text>
-                  </View>
+                    </View>
+                  ) : null}
                 </View>
                 {firstWeekReflectionDays >= 7 ? (
                   <View style={[styles.weeklyRewardCard, { borderColor: appTheme.helperEdge, backgroundColor: appTheme.helperBg }]}>
@@ -8856,6 +9568,34 @@ const styles = StyleSheet.create({
   authMetaText: {
     fontSize: 12,
     fontWeight: "800",
+  },
+  supportCategoryWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  supportCategoryChip: {
+    minHeight: 36,
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  supportCategoryText: {
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  supportMessageInput: {
+    minHeight: 112,
+    paddingTop: 14,
+    paddingBottom: 14,
+  },
+  supportLinkRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 18,
+    paddingTop: 2,
   },
   notificationRow: {
     minHeight: 48,

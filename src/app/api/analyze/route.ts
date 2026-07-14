@@ -153,7 +153,7 @@ export async function POST(req: NextRequest) {
             `Reflections:\n${entriesText || "No reflections were shared this week."}\n\n` +
             `Moods:\n${moodsText || "None logged"}\n\n` +
             `Previous weekly themes:\n${payload.memoryEnabled === false ? "Memory disabled" : (payload.previousWeeklyThemes ?? []).join(", ") || "None"}\n\n` +
-            "Create this user's weekly reflection. Do not treat days without reflections as a problem. If there are no reflections, do not invent patterns. Set rewardUnlocked to true only when reflectionDays is 7, otherwise false. Set rewardId to forest-haven when rewardUnlocked is true, otherwise none.",
+            "Create this user's weekly reflection when there are at least 3 reflection days. Do not treat days without reflections as a problem. If there are fewer than 3 reflection days, avoid claiming a weekly pattern. Sanctuary rewards are handled separately from weekly reflections, so always set rewardUnlocked to false and rewardId to none.",
         },
       ],
     });

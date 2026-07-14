@@ -68,6 +68,33 @@ service cloud.firestore {
       }
     }
 
+    // Operational collections are visible only to authenticated admins.
+    // Writes are handled by the app's existing logging paths, not the dashboard.
+    match /adminAiUsage/{docId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /adminAiUserUsage/{docId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /aiUsageLogs/{docId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /siteAnalytics/{docId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /waitlistSignups/{docId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

@@ -8,3 +8,18 @@
 
  ✓ Starting...
  ✓ Ready in 2.1s
+ ○ Compiling / ...
+ ✓ Compiled / in 4.2s (709 modules)
+ GET / 200 in 1487ms
+ GET / 200 in 27ms
+ GET / 200 in 31ms
+ GET / 200 in 57ms
+ GET / 200 in 44ms
+ GET / 200 in 55ms
+ GET / 200 in 114ms
+ ✓ Compiled /robots.txt in 395ms (446 modules)
+ GET /robots.txt 200 in 464ms
+ ✓ Compiled /sitemap.xml in 82ms (449 modules)
+ GET /sitemap.xml 200 in 460ms
+ ✓ Compiled in 454ms (709 modules)
+ ✓ Compiled in 253ms (298 modules)

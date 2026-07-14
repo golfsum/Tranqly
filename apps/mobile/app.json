@@ -9,13 +9,16 @@
     "scheme": "tranqly",
     "icon": "./assets/icon.png",
     "plugins": [
-      "expo-notifications"
+      "expo-notifications",
+      "expo-apple-authentication",
+      "expo-web-browser"
     ],
     "assetBundlePatterns": [
       "**/*"
     ],
     "ios": {
       "supportsTablet": false,
+      "usesAppleSignIn": true,
       "bundleIdentifier": "com.tranqly.app",
       "buildNumber": "1",
       "infoPlist": {
