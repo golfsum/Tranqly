@@ -894,11 +894,67 @@ function isDemoCheckIn(entry: CheckIn) {
 
 function localCoachReply(text: string): CoachReply {
   const lower = text.toLowerCase();
+  const financialUncertainty = /unemploy|money|check|payment|income|financial|rent|bills/.test(lower);
+  const scheduleAdjustment = /night shift|night schedule|schedule|shift|adjusting/.test(lower);
   const betterSleep = /got some sleep|slept better|slept well|good sleep|rested|didn't need to sleep in|did not need to sleep in/.test(lower);
   const noSleep = /did not sleep|didn't sleep|no sleep|couldn't sleep|could not sleep|slept bad|insomnia/.test(lower);
   const tired = /tired|exhausted|drained|fatigue|worn out/.test(lower);
   const stress = /stress|anxious|overwhelmed|pressure|busy/.test(lower);
   const interview = /interview|job interview|application|new job|hiring|resume/.test(lower);
+
+  if (financialUncertainty && scheduleAdjustment) {
+    return {
+      message:
+        "The payment did not erase the uncertainty, but it gave you a little breathing room after waiting without knowing when help would come. At the same time, home may still feel unsettled while you and your fiancé find a different rhythm. The relief can be real without feeling complete.",
+      title: "A Little Room to Breathe",
+      pattern: "Financial pressure and changes at home may be shaping how settled each day feels.",
+      summary: "One source of pressure eased while the rest is still taking time to settle.",
+      themes: ["finances", "adjustment", "relationship"],
+      tags: ["work", "relationships"],
+      emotionalTone: "relieved and uncertain",
+      followUpQuestions: ["What feels a little lighter now that the payment arrived?"],
+      nextStep: "You do not have to turn this relief into a solution for everything else. It may be enough to let one pressure feel lighter while the rest takes time to settle.",
+      nudgeLabel: "A Little Reassurance",
+      source: "local",
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  if (financialUncertainty) {
+    return {
+      message:
+        "A little money coming in may create breathing room without making the uncertainty disappear. What stands out is that you noticed the relief honestly, without pretending it solved more than it did.",
+      title: "Relief Without Certainty",
+      pattern: "Financial uncertainty may be affecting how much room the rest of the day feels like it has.",
+      summary: "The relief is real, even though the uncertainty is not over.",
+      themes: ["finances", "relief"],
+      tags: ["work"],
+      emotionalTone: "relieved and uncertain",
+      followUpQuestions: ["What pressure feels slightly lighter today?"],
+      nextStep: "It is okay to let this help feel meaningful without asking it to solve everything at once.",
+      nudgeLabel: "A Little Reassurance",
+      source: "local",
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  if (scheduleAdjustment) {
+    return {
+      message:
+        "A new schedule can make familiar parts of home feel less settled for a while. What stands out is that you are already trying to find a shared rhythm instead of expecting the change to feel natural immediately.",
+      title: "Finding a New Rhythm",
+      pattern: "Changes in routine may affect how connected and settled the day feels.",
+      summary: "You are adjusting together, even if the new rhythm is not comfortable yet.",
+      themes: ["adjustment", "relationship"],
+      tags: ["relationships"],
+      emotionalTone: "unsettled and adapting",
+      followUpQuestions: ["What part of the new rhythm has been hardest to settle into?"],
+      nextStep: "This may simply need time. You are already doing the work of adjusting together.",
+      nudgeLabel: "A Little Reassurance",
+      source: "local",
+      createdAt: new Date().toISOString(),
+    };
+  }
 
   if (betterSleep) {
     return {
@@ -1184,7 +1240,7 @@ function safeLocalCoachReply(text: string): CoachReply {
     ...reply,
     title: reply.title?.slice(0, 55) || "One detail was worth noticing",
     preview: (reply.summary === reply.title ? reply.message : reply.summary || reply.message).slice(0, 125),
-    nudgeLabel: "Something to Notice",
+    nudgeLabel: reply.nudgeLabel ?? "Something to Notice",
     pattern: undefined,
   };
 }
@@ -3479,6 +3535,8 @@ function TranqlyApp() {
   const coachPointerStartY = activeCoachStep === "reflectionCoach" ? coachCardTop : coachCardTop + coachCardHeight;
   const micPulse = useRef(new Animated.Value(1)).current;
   const recordingStoppingRef = useRef(false);
+  const recordingStartingRef = useRef(false);
+  const notificationPromptAfterInsightRef = useRef(false);
   const promptSelection = selectMobilePrompt(checkIns, sanctuaryTheme, moods[todayKey()] || null, promptOffset);
   const dailyPrompt = promptSelection.prompt;
 
@@ -3597,7 +3655,7 @@ function TranqlyApp() {
       notificationSettings.permissionStatus === "unknown" &&
       !notificationSettings.notificationPromptShown
     ) {
-      setShowNotificationPrompt(true);
+      notificationPromptAfterInsightRef.current = true;
     }
     const unlockedTheme = sanctuaryThemesByUnlock().find(
       (theme) =>
@@ -3767,6 +3825,13 @@ function TranqlyApp() {
 
     setCheckIns((prev) => prev.map((c) => c.id === entry.id ? entry : c));
     setPending(false);
+  }
+
+  function closeCoachResponse() {
+    setCoachModal(null);
+    if (!notificationPromptAfterInsightRef.current) return;
+    notificationPromptAfterInsightRef.current = false;
+    setTimeout(() => setShowNotificationPrompt(true), 350);
   }
 
   const grouped = useMemo(() => {
@@ -6576,11 +6641,11 @@ function TranqlyApp() {
             visible={coachModal !== null}
             transparent
             animationType="fade"
-            onRequestClose={() => setCoachModal(null)}
+            onRequestClose={closeCoachResponse}
           >
             <Pressable
               style={styles.modalOverlay}
-              onPress={() => setCoachModal(null)}
+              onPress={closeCoachResponse}
             >
               <Pressable
                 style={[styles.modalCard, themedCard, shortLayout && styles.modalCardShort]}
@@ -6588,7 +6653,7 @@ function TranqlyApp() {
               >
                 <Pressable
                   style={styles.modalClose}
-                  onPress={() => setCoachModal(null)}
+                  onPress={closeCoachResponse}
                   hitSlop={12}
                   accessibilityRole="button"
                   accessibilityLabel="Close response"
@@ -7130,27 +7195,76 @@ function TranqlyApp() {
     if (recording) {
       await stopRecording(recording);
     } else {
+      if (recordingStartingRef.current || transcribing || pending) return;
       if (needsWeekTwo) {
         promptWeekTwoContinuation();
         return;
       }
+      recordingStartingRef.current = true;
+      setComposerError("Preparing microphone...");
       try {
-        const perm = await Audio.requestPermissionsAsync();
+        let perm = await Audio.getPermissionsAsync();
+        if (!perm.granted && perm.canAskAgain) {
+          perm = await Audio.requestPermissionsAsync();
+        }
         if (!perm.granted) {
-          Alert.alert("Permission needed", "Microphone access is required to record voice notes.");
+          setComposerError("");
+          Alert.alert(
+            "Microphone access needed",
+            "Allow microphone access in Settings to record a reflection.",
+            [
+              { text: "Not now", style: "cancel" },
+              { text: "Open Settings", onPress: () => void Linking.openSettings() },
+            ]
+          );
           return;
         }
+        // iOS needs a short handoff after its permission sheet dismisses before
+        // the recording audio session can be activated reliably.
+        await new Promise((resolve) => setTimeout(resolve, 300));
         await Audio.setAudioModeAsync({
           allowsRecordingIOS: true,
           playsInSilentModeIOS: true,
+          interruptionModeIOS: 1,
+          shouldDuckAndroid: true,
         });
-        const { recording } = await Audio.Recording.createAsync(
-          Audio.RecordingOptionsPresets.HIGH_QUALITY
-        );
+
+        let activeRecording: Audio.Recording | null = null;
+        let startError: unknown;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const candidate = new Audio.Recording();
+          try {
+            await candidate.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+            await candidate.startAsync();
+            activeRecording = candidate;
+            break;
+          } catch (error) {
+            startError = error;
+            try { await candidate.stopAndUnloadAsync(); } catch {}
+            if (attempt === 0) {
+              await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
+              await new Promise((resolve) => setTimeout(resolve, 250));
+              await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+            }
+          }
+        }
+        if (!activeRecording) throw startError || new Error("Recorder could not be prepared.");
         recordingStoppingRef.current = false;
-        setRecording(recording);
-      } catch {
+        setRecording(activeRecording);
+        setComposerError("");
+      } catch (error) {
+        console.warn("Recording start failed", error);
+        void Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true }).catch(() => {});
+        setComposerError("The microphone could not start. Please try once more.");
+        setTimeout(() => setComposerError(""), 5000);
+        logMobileApiError({
+          errorCode: "mobile_recording_start_failed",
+          errorMessage: error instanceof Error ? error.message : "Recording could not start.",
+          featureArea: "recording",
+        });
         Alert.alert("Recording error", "Could not start recording.");
+      } finally {
+        recordingStartingRef.current = false;
       }
     }
   }
@@ -7162,10 +7276,13 @@ function TranqlyApp() {
       await activeRecording.stopAndUnloadAsync();
       const uri = activeRecording.getURI();
       setRecording(null);
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
       if (!uri) return;
       await transcribeAudio(uri);
-    } catch {
+    } catch (error) {
       setRecording(null);
+      void Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true }).catch(() => {});
+      console.warn("Recording stop failed", error);
       Alert.alert("Recording error", "Could not stop recording.");
     }
   }

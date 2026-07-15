@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "765b556e-d5ac-44cd-80c5-a4d3a5701a36"
+      }
+    },
+    "ios": {
+      "bundleIdentifier": "com.golfsum.tranqly",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    }
+  }
+}

@@ -21,7 +21,7 @@ export const metadata: Metadata = {
     description: "Reflect for one minute a day. Tranqly remembers what matters and helps you notice patterns over time.",
     url: "/",
     siteName: "Tranqly",
-    images: [{ url: "/tranqly_logo.png", width: 1024, height: 1024, alt: "Tranqly lotus logo" }],
+    images: [{ url: "/tranqly_logo.png", width: 1024, height: 1024, alt: "Tranqly app icon" }],
     locale: "en_US",
     type: "website",
   },
