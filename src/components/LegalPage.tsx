@@ -13,10 +13,7 @@ export function LegalPage({ title, updated, intro, children }: LegalPageProps) {
       <div className="mx-auto max-w-4xl">
         <header className="mb-8 flex items-center justify-between gap-4">
           <Link href="/" className="flex items-center gap-3">
-            <span className="relative grid h-11 w-11 place-items-center rounded-full bg-[#22162f] shadow-[0_0_32px_rgba(142,78,255,0.24)]">
-              <span className="absolute inset-0 rounded-full bg-[#8e4eff]/25 blur-xl" />
-              <img src="/tranqly_logo.png" alt="" className="relative h-7 w-7 object-contain" />
-            </span>
+            <img src="/tranqly_logo.png" alt="" className="h-11 w-11 object-contain drop-shadow-[0_0_18px_rgba(142,78,255,0.3)]" />
             <span className="text-xl font-black">Tranqly: Daily Reflections</span>
           </Link>
           <Link

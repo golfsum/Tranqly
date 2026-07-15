@@ -15,7 +15,7 @@ export interface CoachReply {
   nextStep: string;
   title?: string;
   preview?: string;
-  nudgeLabel?: "A Gentle Next Step" | "Something to Try" | "A Question to Carry" | "Something to Notice" | "A Little Reassurance";
+  nudgeLabel?: "A Gentle Next Step" | "Something to Try" | "A Question to Carry" | "Something to Notice" | "A Little Reassurance" | "Something to Remember" | "A Different Perspective" | "One Small Reminder" | "Something Worth Holding Onto" | "A Gentle Question" | "Looking Ahead";
   pattern?: string;
   summary?: string;
   themes?: string[];

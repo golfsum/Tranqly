@@ -26,6 +26,7 @@ interface GroqChatOptions {
   maxTokens: number;
   feature: AiFeatureSource;
   userPlan?: "free" | "plus";
+  modelOverride?: string;
 }
 
 export interface GroqUsageMeta {
@@ -67,12 +68,12 @@ export function modelForFeature(
 }
 
 function fallbackModels(primary: string, feature: AiFeatureSource) {
-  const textFallback = process.env.GROQ_FALLBACK_MODEL ||
-    (primary === "openai/gpt-oss-20b" ? "llama-3.3-70b-versatile" : "openai/gpt-oss-20b");
+  const configuredTextModel = process.env.GROQ_TEXT_MODEL || "openai/gpt-oss-20b";
+  const textFallback = process.env.GROQ_FALLBACK_MODEL || "llama-3.3-70b-versatile";
   if (["weekly_summary", "monthly_summary", "long_term_pattern"].includes(feature)) {
-    return [...new Set([primary, process.env.GROQ_TEXT_MODEL || "openai/gpt-oss-20b", textFallback])];
+    return [...new Set([primary, configuredTextModel, "openai/gpt-oss-20b", textFallback])];
   }
-  return [...new Set([primary, textFallback])];
+  return [...new Set([primary, configuredTextModel, "openai/gpt-oss-20b", textFallback])];
 }
 
 function estimateCost(model: string, inputTokens: number, outputTokens: number) {
@@ -86,13 +87,14 @@ export async function groqJsonChatWithUsage<T>({
   maxTokens,
   feature,
   userPlan = "free",
+  modelOverride,
 }: GroqChatOptions): Promise<{ parsed: T; usage: GroqUsageMeta }> {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
     throw new Error("Missing GROQ_API_KEY");
   }
 
-  const primaryModel = modelForFeature(feature, userPlan);
+  const primaryModel = modelOverride || modelForFeature(feature, userPlan);
   const models = fallbackModels(primaryModel, feature);
   const tried: string[] = [];
   let lastError: unknown;

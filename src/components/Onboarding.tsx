@@ -52,9 +52,7 @@ function OnboardingCard({
         </div>
       </div>
       <div className="flex shrink-0 justify-center">
-        <span className="grid h-[58px] w-[58px] place-items-center rounded-full border border-[#d8c4ff]/35 bg-[#d8c4ff]/12 shadow-[0_0_34px_rgb(var(--calm-rgb)/0.34)]">
-          <img src="/tranqly_logo.png" alt="Tranqly lotus" className="h-[46px] w-[46px] object-contain" />
-        </span>
+        <img src="/tranqly_logo.png" alt="Tranqly lotus" className="h-[66px] w-[66px] object-contain drop-shadow-[0_0_20px_rgb(var(--calm-rgb)/0.28)]" />
       </div>
       <div className="mt-3 shrink-0">
         <h2 className="text-2xl font-black tracking-tight text-fg">{title}</h2>

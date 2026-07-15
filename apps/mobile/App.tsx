@@ -70,7 +70,7 @@ interface CoachReply {
   nextStep: string;
   title?: string;
   preview?: string;
-  nudgeLabel?: "A Gentle Next Step" | "Something to Try" | "A Question to Carry" | "Something to Notice" | "A Little Reassurance";
+  nudgeLabel?: "A Gentle Next Step" | "Something to Try" | "A Question to Carry" | "Something to Notice" | "A Little Reassurance" | "Something to Remember" | "A Different Perspective" | "One Small Reminder" | "Something Worth Holding Onto" | "A Gentle Question" | "Looking Ahead";
   pattern?: string;
   summary?: string;
   themes?: string[];
@@ -4621,9 +4621,7 @@ function TranqlyApp() {
                     />
                   ))}
                 </View>
-                <View style={[styles.onboardingLotus, { borderColor: appTheme.accent, backgroundColor: appTheme.helperBg }]}>
-                  <Image source={TRANQLY_LOGO} style={styles.onboardingLogoImage} resizeMode="contain" />
-                </View>
+                <Image source={TRANQLY_LOGO} style={styles.onboardingLogoImage} resizeMode="contain" />
                 <Text style={[styles.onboardingTitle, themedTitle]}>
                   {currentOnboardingStep === "firstWeek"
                     ? "Your first week with Tranqly"
@@ -10333,20 +10331,9 @@ const styles = StyleSheet.create({
     borderRadius: 28,
     borderWidth: 1,
   },
-  onboardingLotus: {
-    width: 66,
-    height: 66,
-    borderRadius: 33,
-    borderWidth: 1.5,
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: "#B894FF",
-    shadowOpacity: 0.45,
-    shadowRadius: 24,
-  },
   onboardingLogoImage: {
-    width: 52,
-    height: 52,
+    width: 70,
+    height: 70,
   },
   onboardingTitle: {
     fontSize: 23,

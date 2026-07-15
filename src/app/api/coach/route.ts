@@ -33,6 +33,7 @@ const REPLY_SCHEMA = {
     deeper_pressure: { type: "string", description: "Private planning note: the adjustment, need, effort, or uncertainty the user is carrying." },
     why_this_matters: { type: "string", description: "Private planning note: why this moment matters emotionally beyond the event itself." },
     fresh_perspective: { type: "string", description: "Private planning note: one grounded observation the user may not have consciously noticed." },
+    memorable_insight: { type: "string", description: "Private planning note: one specific, grounded sentence worth remembering that adds meaning rather than summary." },
     response_type: {
       type: "string",
       enum: ["permission", "reassurance", "perspective_shift", "reflective_question", "practical_next_step", "recognition"],
@@ -45,7 +46,7 @@ const REPLY_SCHEMA = {
       type: "string",
       description: "One small optional nudge, question, observation, or reassurance.",
     },
-    nudge_label: { type: "string", enum: ["A Gentle Next Step", "Something to Try", "A Question to Carry", "Something to Notice", "A Little Reassurance"] },
+    nudge_label: { type: "string", enum: ["A Gentle Next Step", "Something to Try", "A Question to Carry", "Something to Notice", "A Little Reassurance", "Something to Remember", "A Different Perspective", "One Small Reminder", "Something Worth Holding Onto", "A Gentle Question", "Looking Ahead"] },
     pattern: { type: "string", description: "Empty string unless at least three total relevant reflections support a relationship." },
     summary: { type: "string" },
     themes: { type: "array", items: { type: "string" } },
@@ -67,6 +68,7 @@ const REPLY_SCHEMA = {
     "deeper_pressure",
     "why_this_matters",
     "fresh_perspective",
+    "memorable_insight",
     "response_type",
     "advice_check",
     "title",
@@ -94,6 +96,7 @@ interface GeneratedCoachReply {
   deeper_pressure?: string;
   why_this_matters?: string;
   fresh_perspective?: string;
+  memorable_insight?: string;
   response_type?: "permission" | "reassurance" | "perspective_shift" | "reflective_question" | "practical_next_step" | "recognition";
   advice_check?: string;
   title?: string;
@@ -103,7 +106,7 @@ interface GeneratedCoachReply {
   message?: string;
   gentle_nudge?: string;
   next_step?: string;
-  nudge_label?: "A Gentle Next Step" | "Something to Try" | "A Question to Carry" | "Something to Notice" | "A Little Reassurance";
+  nudge_label?: "A Gentle Next Step" | "Something to Try" | "A Question to Carry" | "Something to Notice" | "A Little Reassurance" | "Something to Remember" | "A Different Perspective" | "One Small Reminder" | "Something Worth Holding Onto" | "A Gentle Question" | "Looking Ahead";
   pattern?: string;
   summary?: string;
   themes?: string[];
@@ -115,6 +118,29 @@ interface GeneratedCoachReply {
   safety_flags?: string[];
   confidence?: number;
 }
+
+interface VisibleCoachRewrite {
+  title: string;
+  preview: string;
+  what_stood_out: string;
+  memorable_insight: string;
+  gentle_nudge: string;
+  nudge_label: "A Gentle Next Step" | "Something to Try" | "A Question to Carry" | "Something to Notice" | "A Little Reassurance" | "Something to Remember" | "A Different Perspective" | "One Small Reminder" | "Something Worth Holding Onto" | "A Gentle Question" | "Looking Ahead";
+}
+
+const VISIBLE_REWRITE_SCHEMA = {
+  type: "object",
+  properties: {
+    title: { type: "string" },
+    preview: { type: "string" },
+    what_stood_out: { type: "string" },
+    memorable_insight: { type: "string" },
+    gentle_nudge: { type: "string" },
+    nudge_label: { type: "string", enum: ["A Gentle Next Step", "Something to Try", "A Question to Carry", "Something to Notice", "A Little Reassurance", "Something to Remember", "A Different Perspective", "One Small Reminder", "Something Worth Holding Onto", "A Gentle Question", "Looking Ahead"] },
+  },
+  required: ["title", "preview", "what_stood_out", "memorable_insight", "gentle_nudge", "nudge_label"],
+  additionalProperties: false,
+} as const;
 
 const CLASSIFIER_SCHEMA = {
   type: "object",
@@ -165,17 +191,20 @@ const SYSTEM_PROMPT =
   "Before writing the visible response, fill the private planning fields. Identify the emotional truth, any mixed emotions, the deeper pressure or adjustment, and the best response type. Use advice_check to confirm the nudge does not suggest something the user already said they are doing. " +
   "Do not stop after identifying what happened. Ask so what? Determine why the moment matters, what changed, what stayed unresolved, and what it may reveal about how the user is moving through the situation. Put that answer in why_this_matters. " +
   "Then ask whether the user would learn anything new about their experience by reading the response. Put one grounded, non-obvious observation in fresh_perspective. If it only paraphrases the entry, rethink it before writing the visible response. " +
+  "Silently ask what a thoughtful friend would notice that the user did not explicitly say. Put the strongest answer in memorable_insight as one complete sentence of 12 to 24 words. It must connect a concrete detail to its emotional meaning, name a supported shift or tension, recognize mixed emotions, reveal overlooked progress, or offer a grounded perspective. It must not merely restate an event. " +
   "Use one or two concrete details from the current reflection. Then identify a deeper meaning without repeating the entry. Notice mixed experiences such as relief without security, progress without certainty, gratitude with exhaustion, hope with hesitation, or care with frustration when supported. " +
   "Do not diagnose, exaggerate, moralize, blame anyone, or invent emotions or motives. Use tentative language when interpreting meaning. " +
   "Do not say something keeps the user on edge, makes them afraid, or reveals a hidden fear unless they explicitly described that feeling. " +
   "The visible response must add a fresh perspective. The nudge may be permission, reassurance, a perspective shift, a reflective question, a practical next step, or simple recognition. Do not force a task. " +
-  "The visible response must express the emotional_truth, why_this_matters, fresh_perspective, and, when present, the mixed_emotions. Do not leave the interpretation only in the private planning fields. " +
+  "The visible response must naturally include the meaning of emotional_truth, why_this_matters, fresh_perspective, memorable_insight, and, when present, the mixed_emotions. The memorable insight should be the sentence most worth saving or revisiting. Do not leave the interpretation only in the private planning fields. " +
   "Before suggesting an action, check for actions already underway. If the user says they are working on, trying, discussing, adjusting, or figuring something out, recognize that effort instead of suggesting the same action. " +
   "Mention a longer-term pattern only when at least two earlier relevant reflections support it. Otherwise return an empty pattern. " +
   "Title must be 3 to 7 natural words, at most 55 characters, with no ending period. Make it an emotionally meaningful observation, not a topic label or factual recap. " +
   "Preview must be at most 125 characters, complete its thought, and add a new layer of meaning. Never repeat or lightly rephrase the title. " +
   "What stood out must be 2 to 4 concise sentences. Its first sentence should identify the emotional truth. The next sentence should connect it to a deeper effort, need, tension, or adjustment. Reference one or two concrete details without claiming certainty. " +
+  "Keep each visible sentence under 28 words. Do not use a long compound sentence to explain the whole reflection. Avoid academic transitions such as which suggests that, indicating that, or the connection between. " +
   "Gentle nudge must be optional and directly relevant. Choose a nudge label that accurately describes its content. Reassurance or recognition is often better than advice. " +
+  "Before returning, run four checks. If the response would still fit without this reflection, rewrite it. If it adds nothing the user did not already say, rewrite it. If it has no memorable sentence, rewrite it. If it could apply to thousands of users, make the interpretation more specific without inventing facts. " +
   "Always speak directly to the user as you. Never describe the user in third person or use their name inside the reflection response. " +
   "Suggestions must be manageable and phrased with may, might, could, or if it helps. Never tell the user what they must do. " +
   "Avoid blaming labels such as failed, mistake, unhealthy, poor choice, not enough, broken, or you need to. " +
@@ -289,11 +318,29 @@ function responseQualityIssues(entry: string, reply: GeneratedCoachReply, name?:
     "positive step",
     "requiring some adjustments",
     "navigating multiple shifts",
+    "which suggests that",
+    "small changes can add up",
+    "small victories",
+    "powerful reminder",
+    "what works for you",
+    "more manageable",
+    "the connection between",
+    "foundation of a good night's rest",
+    "rest can change your morning",
+    "this helped your morning",
+    "sense of control",
+    "hinting at",
+    "you're doing okay",
+    "even on tough days",
   ];
-  const topicTitles = /^(financial stress|schedule changes|today'?s reflection|feeling better|unemployment update|small relief)$/i;
+  const topicTitles = /^(financial stress|schedule changes|today'?s reflection|feeling better|unemployment update|small relief|better morning|better sleep|hard day|rough day)$/i;
   const sentenceCount = stoodOut.match(/[^.!?]+[.!?]+|[^.!?]+$/g)?.length ?? 0;
+  const sentenceWordCounts = (stoodOut.match(/[^.!?]+[.!?]+|[^.!?]+$/g) ?? []).map((sentence) => (sentence.match(/\b[\w']+\b/g) ?? []).length);
 
   if (sentenceCount < 2) issues.push("what_stood_out needs at least two interpretive sentences");
+  if ((stoodOut.match(/\b[\w']+\b/g) ?? []).length > 34 && sentenceCount < 3) issues.push("what_stood_out uses a long compound sentence instead of concise observations");
+  if (sentenceWordCounts.length && sentenceWordCounts.every((count) => count < 8)) issues.push("what_stood_out uses vague fragments instead of one developed insight");
+  if ((title.match(/\b[\w']+\b/g) ?? []).length < 3) issues.push("title is too generic to feel like an observation");
   if (cleanText(reply.preview).split(/\s+/).filter(Boolean).length < 5) issues.push("preview is a generic fragment instead of a complete insight");
   if (topicTitles.test(title)) issues.push("title labels the topic instead of naming emotional meaning");
   if (genericPhrases.some((phrase) => combined.includes(phrase))) issues.push("response uses generic wellness language");
@@ -304,12 +351,26 @@ function responseQualityIssues(entry: string, reply: GeneratedCoachReply, name?:
   if (/\b(the user|they feel|they are|he feels|she feels|he is|she is)\b/i.test(combined)) {
     issues.push("response uses third person instead of speaking directly to the user");
   }
+  const unsupportedClaimedEmotions = ["relief", "calm", "anxious", "afraid", "proud", "hopeful", "frustrated"].filter(
+    (emotion) => combined.includes(`you felt ${emotion}`) && !entry.toLowerCase().includes(emotion)
+  );
+  if (unsupportedClaimedEmotions.length) issues.push("response states an emotion the user did not name as certain");
   if (overlapRatio(entry, `${stoodOut} ${nudge}`) > 0.58) issues.push("too much of the response paraphrases the entry");
 
-  const planningWords = new Set(meaningfulWords(`${cleanText(reply.emotional_truth)} ${cleanText(reply.mixed_emotions)} ${cleanText(reply.deeper_pressure)} ${cleanText(reply.why_this_matters)} ${cleanText(reply.fresh_perspective)}`));
+  const memorableInsight = cleanText(reply.memorable_insight);
+  const planningWords = new Set(meaningfulWords(`${cleanText(reply.emotional_truth)} ${cleanText(reply.mixed_emotions)} ${cleanText(reply.deeper_pressure)} ${cleanText(reply.why_this_matters)} ${cleanText(reply.fresh_perspective)} ${memorableInsight}`));
   const visibleWords = new Set(meaningfulWords(`${stoodOut} ${nudge}`));
   const visiblePlanningMatches = [...planningWords].filter((word) => visibleWords.has(word)).length;
   if (planningWords.size && visiblePlanningMatches < 2) issues.push("visible response does not express the planned emotional meaning");
+  const memorableWords = new Set(meaningfulWords(memorableInsight));
+  const visibleMemorableMatches = [...memorableWords].filter((word) => visibleWords.has(word)).length;
+  if (!memorableInsight) {
+    issues.push("no memorable insight sentence was identified");
+  } else if ((memorableInsight.match(/\b[\w']+\b/g) ?? []).length < 12) {
+    issues.push("memorable insight is too short or vague to add a fresh perspective");
+  } else if (memorableWords.size > 2 && visibleMemorableMatches < Math.min(3, memorableWords.size)) {
+    issues.push("the memorable insight did not reach the visible response");
+  }
   const entrySignalsMixedEmotion = /\b(but|still|although|even though|at the same time|yet)\b/i.test(entry);
   if (entrySignalsMixedEmotion && !cleanText(reply.mixed_emotions)) issues.push("mixed emotions in the reflection were reduced to one feeling");
 
@@ -337,6 +398,66 @@ function groundedFallbackReply(entry: string): GeneratedCoachReply | null {
   const lower = entry.toLowerCase();
   const financialUncertainty = /unemploy|money|check|payment|income|financial|rent|bills/.test(lower);
   const scheduleAdjustment = /night shift|night schedule|schedule|shift|adjusting/.test(lower);
+  const betterSleep = /slept through|got some sleep|slept better|slept well|good night'?s sleep|rested/.test(lower);
+  const restorativeWalk = /\b(?:walk|walking|walked)\b/.test(lower) && /less tense|calmer|calm|clearer|better|lighter|relief/.test(lower);
+  if (betterSleep) {
+    return {
+      emotional_truth: "Rest changed how available the day felt, not only how much energy the user had.",
+      mixed_emotions: "The day stayed busy, but it no longer felt as draining.",
+      deeper_pressure: "Several restless nights had made ordinary work require more effort.",
+      why_this_matters: "The same workload can feel different when the user is not spending the morning fighting exhaustion.",
+      fresh_perspective: "Rest gave the user more room to meet the day rather than merely endure it.",
+      memorable_insight: "Rest gave you enough room to meet a busy morning without feeling consumed by it.",
+      response_type: "recognition",
+      advice_check: "The user did not ask for sleep advice, so the response recognizes the change instead of prescribing a routine.",
+      title: "Rest Gave the Day More Room",
+      preview: "The day stayed busy, but rest changed how much of you it required.",
+      what_stood_out:
+        "After several restless nights, the difference was not only that you had more energy. Rest gave you enough room to meet a busy morning without feeling consumed by it. The work stayed busy, but you did not have to drag yourself into the day.",
+      gentle_nudge:
+        "You may not need to turn this into a perfect sleep routine. It may be enough to remember how different the same workload felt after real rest.",
+      nudge_label: "Something to Notice",
+      pattern: "",
+      summary: "Rest changed how much effort the same kind of day required.",
+      themes: ["sleep", "energy", "work"],
+      tags: ["sleep", "work"],
+      emotional_tone: "rested and relieved",
+      follow_up_questions: ["What felt most different once you were not fighting tiredness?"],
+      memory_note: "",
+      should_save_memory: false,
+      safety_flags: [],
+      confidence: 0.9,
+    };
+  }
+  if (restorativeWalk) {
+    return {
+      emotional_truth: "The difficult part of the day did not disappear, but it did not get the final word.",
+      mixed_emotions: "The day held both pressure and a noticeable release from it.",
+      deeper_pressure: "Work tension was following the user toward the end of the day.",
+      why_this_matters: "A brief change of place created a boundary between the pressure and what came next.",
+      fresh_perspective: "The walk mattered less as an escape and more as a way to stop carrying work forward unchanged.",
+      memorable_insight: "The heavy part of the day did not disappear, but it did not get the final word.",
+      response_type: "recognition",
+      advice_check: "The user already took the helpful action, so the response notices its meaning instead of prescribing another walk.",
+      title: "A Small Break Changed the Ending",
+      preview: "The walk did not solve the afternoon, but it changed what you carried home.",
+      what_stood_out:
+        "The heavy part of the day did not disappear, but it did not get the final word. That short walk created a boundary between work and whatever came next. What shifted was not the afternoon itself, but how much of it you carried forward.",
+      gentle_nudge:
+        "You already noticed something useful about the transition out of work. It may be worth remembering that the end of a hard day can still feel different from its middle.",
+      nudge_label: "Something to Notice",
+      pattern: "",
+      summary: "A short transition changed how much of the workday followed you home.",
+      themes: ["work", "calm", "movement"],
+      tags: ["work", "calm"],
+      emotional_tone: "tense then calmer",
+      follow_up_questions: ["What about the walk helped the workday feel farther away?"],
+      memory_note: "",
+      should_save_memory: false,
+      safety_flags: [],
+      confidence: 0.9,
+    };
+  }
   if (!financialUncertainty || !scheduleAdjustment) return null;
   const relationshipLabel = /\bgirlfriend\b/.test(lower) ? "girlfriend"
     : /\bboyfriend\b/.test(lower) ? "boyfriend"
@@ -357,6 +478,7 @@ function groundedFallbackReply(entry: string): GeneratedCoachReply | null {
     deeper_pressure: "Financial uncertainty and a shared routine change are both taking time to settle.",
     why_this_matters: "One burden becoming lighter can create breathing room even when the larger season is unresolved.",
     fresh_perspective: "The user is allowing relief to be real without pretending everything is fixed.",
+    memorable_insight: "The relief can be real without feeling complete.",
     response_type: "reassurance",
     advice_check: "The user is already working on the schedule adjustment, so no scheduling task is suggested.",
     title: "A Little Room to Breathe",
@@ -554,38 +676,49 @@ export async function POST(req: NextRequest) {
       messages: generationMessages,
     });
     const usageRecords = [usage];
-    const initialQualityIssues = responseQualityIssues(entryText, parsed, payload.name);
-    if (initialQualityIssues.length) {
+    let qualityIssues = responseQualityIssues(entryText, parsed, payload.name);
+    for (let attempt = 0; attempt < 2 && qualityIssues.length; attempt += 1) {
       try {
-        const rewrite = await groqJsonChatWithUsage<GeneratedCoachReply>({
-          maxTokens: 700,
+        const rewrite = await groqJsonChatWithUsage<VisibleCoachRewrite>({
+          maxTokens: 430,
           feature: "daily_insight",
           userPlan: payload.userPlan ?? "free",
-          schema: { name: "coach_reply", schema: REPLY_SCHEMA },
+          modelOverride: process.env.GROQ_QUALITY_MODEL || "openai/gpt-oss-120b",
+          schema: { name: "visible_coach_rewrite", schema: VISIBLE_REWRITE_SCHEMA },
           messages: [
-            ...generationMessages,
-            { role: "assistant", content: JSON.stringify(parsed) },
+            {
+              role: "system",
+              content:
+                "You are the final editor for a private reflection companion. Rewrite only the user-visible response fields. Add one grounded insight the user did not explicitly state, without inventing facts. Connect ideas instead of summarizing them separately. Use plain, warm language, no em dashes, no diagnosis, no generic wellness phrases, and no forced advice. Return only the requested JSON.",
+            },
             {
               role: "user",
               content:
-                `The draft failed quality review: ${initialQualityIssues.join("; ")}. ` +
-                "Rewrite it from a deeper interpretation rather than a summary. Ask so what, state why the moment matters, and include one grounded observation the user may not have consciously noticed. Keep one or two concrete details and do not suggest an action already underway. " +
+                `Reflection: ${entryText.slice(0, 1200)}\n` +
+                `Relevant earlier reflections: ${context || "None"}\n` +
+                `Draft: ${JSON.stringify(parsed)}\n\n` +
+                `The draft failed quality review: ${qualityIssues.join("; ")}. ` +
+                "Rewrite it from a deeper interpretation rather than a summary. Ask so what, state why the moment matters, and include one grounded, memorable sentence of 12 to 24 words that the user may not have consciously noticed. Make that sentence visible in what_stood_out, connect the reflection's ideas rather than listing them, keep one or two concrete details, and do not suggest an action already underway. Use 2 to 4 short sentences under 28 words each. Remove stock wellness language and academic phrases such as which suggests that, small victories, what works for you, or more manageable. " +
                 "The gentle section may simply offer permission or reassurance. Return complete valid JSON.",
             },
           ],
         });
-        const rewrittenIssues = responseQualityIssues(entryText, rewrite.parsed, payload.name);
+        const rewrittenCandidate: GeneratedCoachReply = { ...parsed, ...rewrite.parsed };
+        const rewrittenIssues = responseQualityIssues(entryText, rewrittenCandidate, payload.name);
         usageRecords.push(rewrite.usage);
-        if (rewrittenIssues.length <= initialQualityIssues.length) {
-          parsed = rewrite.parsed;
+        if (rewrittenIssues.length < qualityIssues.length) {
+          parsed = rewrittenCandidate;
           usage = rewrite.usage;
+          qualityIssues = rewrittenIssues;
+        } else {
+          break;
         }
       } catch (rewriteError) {
         console.warn(`[coach:${requestId}] quality rewrite failed, using first response`, rewriteError);
+        break;
       }
     }
-    const remainingQualityIssues = responseQualityIssues(entryText, parsed, payload.name);
-    const groundedFallback = remainingQualityIssues.length ? groundedFallbackReply(entryText) : null;
+    const groundedFallback = qualityIssues.length ? groundedFallbackReply(entryText) : null;
     if (groundedFallback) {
       parsed = groundedFallback;
     }

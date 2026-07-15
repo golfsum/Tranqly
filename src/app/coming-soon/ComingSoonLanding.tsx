@@ -103,10 +103,7 @@ function Icon({
 function Brand() {
   return (
     <div className="flex items-center gap-3">
-      <div className="relative grid h-11 w-11 place-items-center rounded-full bg-[#22162f] shadow-[0_0_32px_rgba(142,78,255,0.24)]">
-        <div className="absolute inset-0 rounded-full bg-[#8e4eff]/25 blur-xl" />
-        <img src="/tranqly_logo.png" alt="" className="relative h-7 w-7 object-contain" />
-      </div>
+      <img src="/tranqly_logo.png" alt="" className="h-11 w-11 object-contain drop-shadow-[0_0_18px_rgba(142,78,255,0.3)]" />
       <div className="text-[1.45rem] font-semibold tracking-tight text-white sm:text-[1.65rem]">Tranqly: Daily Reflections</div>
     </div>
   );
@@ -700,10 +697,7 @@ export default function ComingSoonLanding({ launchMode = false }: { launchMode?:
           {!launchMode ? <GlassCard id="waitlist" className="p-6">
             <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr] xl:items-center">
               <div className="flex items-start gap-4">
-                <div className="relative grid h-16 w-16 place-items-center rounded-full bg-[#22162f] shadow-[0_0_32px_rgba(142,78,255,0.24)]">
-                  <div className="absolute inset-0 rounded-full bg-[#8e4eff]/25 blur-xl" />
-                  <img src="/tranqly_logo.png" alt="" className="relative h-9 w-9 object-contain" />
-                </div>
+                <img src="/tranqly_logo.png" alt="" className="h-16 w-16 object-contain drop-shadow-[0_0_24px_rgba(142,78,255,0.34)]" />
                 <div>
                   <h3 className="text-[2.1rem] font-semibold text-white">Be the first to know when Tranqly launches.</h3>
                   <p className="mt-2 text-[1.05rem] leading-7 text-white/64">Join the waitlist for early access and exclusive perks.</p>

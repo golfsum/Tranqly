@@ -5,6 +5,32 @@ param(
 
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Drawing
+Add-Type -ReferencedAssemblies "System.Drawing" -TypeDefinition @"
+using System;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
+
+public static class TranqlyImageTools {
+  public static Bitmap ForceOpaque(Bitmap source) {
+    var output = new Bitmap(source.Width, source.Height, PixelFormat.Format32bppArgb);
+    var rect = new Rectangle(0, 0, output.Width, output.Height);
+    var sourceData = source.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+    var outputData = output.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+    try {
+      var bytes = Math.Abs(sourceData.Stride) * sourceData.Height;
+      var pixels = new byte[bytes];
+      Marshal.Copy(sourceData.Scan0, pixels, 0, bytes);
+      for (var index = 3; index < bytes; index += 4) pixels[index] = 255;
+      Marshal.Copy(pixels, 0, outputData.Scan0, bytes);
+    } finally {
+      source.UnlockBits(sourceData);
+      output.UnlockBits(outputData);
+    }
+    return output;
+  }
+}
+"@
 
 $root = Split-Path -Parent $PSScriptRoot
 $sourcePath = (Resolve-Path -LiteralPath $Source).Path
@@ -68,19 +94,17 @@ function Write-PngIco {
 
 $sourceBytes = [System.IO.File]::ReadAllBytes($sourcePath)
 $sourceStream = New-Object System.IO.MemoryStream(,$sourceBytes)
-$loadedImage = [System.Drawing.Image]::FromStream($sourceStream)
-$image = New-Object System.Drawing.Bitmap($loadedImage)
-$loadedImage.Dispose()
-$sourceStream.Dispose()
+$image = [System.Drawing.Bitmap]::FromStream($sourceStream)
+$opaqueImage = [TranqlyImageTools]::ForceOpaque($image)
 try {
   $outputs = @(
     @{ Path = "public\tranqly_logo.png"; Size = 1024 },
-    @{ Path = "public\icons\icon-192.png"; Size = 192 },
-    @{ Path = "public\icons\icon-512.png"; Size = 512 },
-    @{ Path = "public\icons\apple-touch-icon.png"; Size = 180 },
-    @{ Path = "apps\mobile\assets\icon.png"; Size = 1024 },
-    @{ Path = "apps\mobile\assets\images\icon.png"; Size = 1024 },
-    @{ Path = "apps\mobile\assets\images\adaptive-icon.png"; Size = 1024 },
+    @{ Path = "public\icons\icon-192.png"; Size = 192; Opaque = $true },
+    @{ Path = "public\icons\icon-512.png"; Size = 512; Opaque = $true },
+    @{ Path = "public\icons\apple-touch-icon.png"; Size = 180; Opaque = $true },
+    @{ Path = "apps\mobile\assets\icon.png"; Size = 1024; Opaque = $true },
+    @{ Path = "apps\mobile\assets\images\icon.png"; Size = 1024; Opaque = $true },
+    @{ Path = "apps\mobile\assets\images\adaptive-icon.png"; Size = 1024; Opaque = $true },
     @{ Path = "apps\mobile\assets\images\tranqly_logo.png"; Size = 512 },
     @{ Path = "apps\mobile\assets\splash.png"; Size = 1024 },
     @{ Path = "apps\mobile\assets\images\splash.png"; Size = 1024 }
@@ -88,7 +112,8 @@ try {
 
   foreach ($output in $outputs) {
     $destination = Join-Path $root $output.Path
-    Write-ResizedPng -Image $image -Destination $destination -Size $output.Size
+    $sourceImage = if ($output.Opaque) { $opaqueImage } else { $image }
+    Write-ResizedPng -Image $sourceImage -Destination $destination -Size $output.Size
     Write-Output "Generated $($output.Path) ($($output.Size)x$($output.Size))"
   }
 
@@ -99,5 +124,7 @@ try {
   Write-Output "Generated public\favicon.ico (64x64)"
 }
 finally {
+  $opaqueImage.Dispose()
   $image.Dispose()
+  $sourceStream.Dispose()
 }

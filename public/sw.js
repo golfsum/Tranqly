@@ -1,5 +1,5 @@
 /* Tranqly service worker, offline shell + static cache */
-const CACHE = "tranqly-v2";
+const CACHE = "tranqly-v3";
 const STATIC_ASSETS = [
   "/",
   "/manifest.webmanifest",
