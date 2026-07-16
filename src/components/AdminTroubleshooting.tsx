@@ -54,6 +54,11 @@ export default function AdminTroubleshooting() {
   });
   const [loading, setLoading] = useState(false);
   const [loadErrors, setLoadErrors] = useState<string[]>([]);
+  const adminUid = getFirebase()?.auth.currentUser?.uid ?? "";
+  const firebaseProjectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? "tranqly-e91fb";
+  const adminDocumentUrl = adminUid
+    ? `https://console.firebase.google.com/project/${firebaseProjectId}/firestore/databases/-default-/data/~2Fadmins~2F${adminUid}`
+    : `https://console.firebase.google.com/project/${firebaseProjectId}/firestore/databases/-default-/data/~2Fadmins`;
 
   async function loadDashboard() {
     if (!firebaseConfigured()) return;
@@ -184,11 +189,38 @@ export default function AdminTroubleshooting() {
         <div className="mb-4 rounded-2xl border border-rose-400/30 bg-rose-400/10 p-4 text-sm text-rose-100">
           <p className="font-black">Some live dashboard data could not load.</p>
           <p className="mt-1 leading-relaxed">
-            Firestore admin access requires an `admins/{getFirebase()?.auth.currentUser?.uid ?? "your-admin-uid"}` document. The allowed admin email alone does not grant database access.
+            Your login is valid, but this account has not been granted Firestore admin access yet.
           </p>
-          <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-rose-100/80">
-            {loadErrors.map((error) => <li key={error}>{error}</li>)}
-          </ul>
+          <div className="mt-3 rounded-xl border border-rose-200/20 bg-ink/35 p-3 text-xs leading-relaxed text-rose-50/90">
+            <p>Create document <span className="font-black">admins/{adminUid || "your-admin-uid"}</span> with:</p>
+            <p className="mt-1 font-mono">active: true</p>
+            <p className="font-mono">role: &quot;admin&quot;</p>
+            <p className="font-mono">email: &quot;{getFirebase()?.auth.currentUser?.email ?? "your admin email"}&quot;</p>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <a
+              href={adminDocumentUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-full border border-rose-200/25 bg-rose-100/10 px-3 py-2 text-xs font-black text-rose-50"
+            >
+              Open Firebase admin record
+            </a>
+            <button
+              type="button"
+              onClick={() => void loadDashboard()}
+              disabled={loading}
+              className="rounded-full border border-rose-200/25 bg-ink/40 px-3 py-2 text-xs font-black text-rose-50 disabled:opacity-50"
+            >
+              {loading ? "Checking..." : "I created it, retry"}
+            </button>
+          </div>
+          <details className="mt-3 text-xs text-rose-100/70">
+            <summary className="cursor-pointer font-bold">Technical details</summary>
+            <ul className="mt-2 list-disc space-y-1 pl-5">
+              {loadErrors.map((error) => <li key={error}>{error}</li>)}
+            </ul>
+          </details>
         </div>
       ) : null}
 

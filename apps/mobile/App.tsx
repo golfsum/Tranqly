@@ -133,6 +133,7 @@ interface MobileAuthUser {
   idToken: string;
   refreshToken: string;
   expiresAt: number;
+  providerId?: "apple.com" | "google.com" | "password";
 }
 
 interface AppState {
@@ -2887,8 +2888,27 @@ function mobileAuthErrorMessage(error: unknown) {
   if (message.includes("INVALID_PASSWORD")) return "That email or password did not match.";
   if (message.includes("WEAK_PASSWORD")) return "Your password needs 8 characters, one uppercase letter, one number, and one special character.";
   if (message.includes("INVALID_EMAIL")) return "Please enter a valid email address.";
+  if (message.includes("OPERATION_NOT_ALLOWED")) return "Google Sign In is not enabled for Tranqly yet.";
+  if (message.includes("UNAUTHORIZED_DOMAIN") || message.includes("INVALID_CONTINUE_URI")) {
+    return "Tranqly's sign-in domain is not authorized in Firebase yet.";
+  }
+  if (
+    message.includes("INVALID_IDP_RESPONSE") ||
+    message.includes("INVALID_ID_TOKEN") ||
+    message.includes("INVALID_CREDENTIAL") ||
+    message.includes("AUDIENCE_MISMATCH")
+  ) {
+    return "Google Sign In is not configured for this Tranqly build yet.";
+  }
   if (message.includes("NETWORK")) return "Tranqly could not connect right now. Please try again in a moment.";
   return "Tranqly could not sign you in right now. Please try again in a moment.";
+}
+
+function mobileAuthProviderLabel(user: MobileAuthUser) {
+  if (user.providerId === "google.com") return "Google";
+  if (user.providerId === "apple.com") return "Apple";
+  if (user.providerId === "password") return "Email and password";
+  return "Tranqly account";
 }
 
 function notificationPermissionState(permission: unknown): "granted" | "denied" | "unknown" {
@@ -2956,7 +2976,7 @@ function GoogleAccountButton({
   busy: boolean;
   borderColor: string;
   textColor: string;
-  onCredential: (idToken: string, accessToken?: string) => void;
+  onCredential: (idToken?: string, accessToken?: string) => void;
   onError: (message: string) => void;
 }) {
   const [request, response, promptAsync] = Google.useAuthRequest({
@@ -2975,7 +2995,7 @@ function GoogleAccountButton({
     }
     const idToken = response.authentication?.idToken || response.params?.id_token;
     const accessToken = response.authentication?.accessToken || response.params?.access_token;
-    if (!idToken) {
+    if (!idToken && !accessToken) {
       onError("Google did not return a valid sign-in token.");
       return;
     }
@@ -3044,6 +3064,7 @@ function TranqlyApp() {
   const [supportMessage, setSupportMessage] = useState("");
   const [supportBusy, setSupportBusy] = useState(false);
   const [supportNotice, setSupportNotice] = useState("");
+  const [supportExpanded, setSupportExpanded] = useState(false);
   const [coachModal, setCoachModal] = useState<{ text: string; reply: CoachReply } | null>(null);
   const [responseFeedbackOpen, setResponseFeedbackOpen] = useState(false);
   const [responseFeedbackText, setResponseFeedbackText] = useState("");
@@ -3312,6 +3333,7 @@ function TranqlyApp() {
         idToken: data.idToken,
         refreshToken: data.refreshToken,
         expiresAt: Date.now() + Number(data.expiresIn || 3600) * 1000,
+        providerId: "password",
       });
       setAuthPassword("");
       setShowEmailAuth(false);
@@ -4090,6 +4112,7 @@ function TranqlyApp() {
       setSupportSubject("");
       setSupportMessage("");
       setSupportNotice("Ticket submitted. You can follow up at support@tranqly.com.");
+      setSupportExpanded(false);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not submit the ticket.";
@@ -4104,13 +4127,18 @@ function TranqlyApp() {
     }
   }
 
-  function applyFirebaseAuthResult(data: Record<string, any>, fallbackEmail = "") {
+  function applyFirebaseAuthResult(
+    data: Record<string, any>,
+    providerId: "apple.com" | "google.com",
+    fallbackEmail = ""
+  ) {
     const user: MobileAuthUser = {
       email: data.email || fallbackEmail || "Connected account",
       localId: data.localId,
       idToken: data.idToken,
       refreshToken: data.refreshToken,
       expiresAt: Date.now() + Number(data.expiresIn || 3600) * 1000,
+      providerId,
     };
     setAuthUser(user);
     setAuthEmail(data.email || fallbackEmail || "");
@@ -4120,13 +4148,14 @@ function TranqlyApp() {
 
   async function signInWithFirebaseProvider(
     providerId: "apple.com" | "google.com",
-    idToken: string,
+    idToken: string | undefined,
     options?: { accessToken?: string; nonce?: string; fallbackEmail?: string }
   ) {
     if (!FIREBASE_API_KEY) throw new Error("Firebase is not configured for this build.");
+    const useGoogleAccessToken = providerId === "google.com" && Boolean(options?.accessToken);
     const parameters = [
-      `id_token=${encodeURIComponent(idToken)}`,
-      options?.accessToken ? `access_token=${encodeURIComponent(options.accessToken)}` : "",
+      !useGoogleAccessToken && idToken ? `id_token=${encodeURIComponent(idToken)}` : "",
+      useGoogleAccessToken && options?.accessToken ? `access_token=${encodeURIComponent(options.accessToken)}` : "",
       options?.nonce ? `nonce=${encodeURIComponent(options.nonce)}` : "",
       `providerId=${encodeURIComponent(providerId)}`,
     ].filter(Boolean);
@@ -4136,7 +4165,7 @@ function TranqlyApp() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          requestUri: "https://tranqly.app",
+          requestUri: "http://localhost",
           postBody: parameters.join("&"),
           returnIdpCredential: true,
           returnSecureToken: true,
@@ -4144,8 +4173,24 @@ function TranqlyApp() {
       }
     );
     const data = await response.json();
-    if (!response.ok) throw new Error(data?.error?.message || "FEDERATED_AUTH_FAILED");
-    applyFirebaseAuthResult(data, options?.fallbackEmail);
+    if (!response.ok) {
+      const errorCode = data?.error?.message || "FEDERATED_AUTH_FAILED";
+      console.warn("Firebase provider sign-in failed", {
+        providerId,
+        status: response.status,
+        errorCode,
+      });
+      logMobileApiError({
+        errorCode: "federated_auth_failed",
+        errorMessage: errorCode,
+        featureArea: "auth",
+        statusCode: response.status,
+        route: "firebase/accounts:signInWithIdp",
+        metadata: { providerId, credentialType: useGoogleAccessToken ? "access_token" : "id_token" },
+      });
+      throw new Error(errorCode);
+    }
+    applyFirebaseAuthResult(data, providerId, options?.fallbackEmail);
   }
 
   async function signInWithApple() {
@@ -4179,7 +4224,7 @@ function TranqlyApp() {
     }
   }
 
-  async function signInWithGoogleCredential(idToken: string, accessToken?: string) {
+  async function signInWithGoogleCredential(idToken?: string, accessToken?: string) {
     setAuthBusy(true);
     setAuthNotice("");
     try {
@@ -5755,7 +5800,7 @@ function TranqlyApp() {
                     <Text style={[styles.youSectionTitle, themedAccent2]}>Account</Text>
                     <Text style={[styles.youCardBody, themedBody]}>
                       {authUser
-                        ? `Signed in as ${authUser.email}.`
+                        ? `Signed in with ${mobileAuthProviderLabel(authUser)} as ${authUser.email}.`
                         : "Sign in to manage your Tranqly account. Saved reflections remain on this device."}
                     </Text>
                   </View>
@@ -5768,6 +5813,8 @@ function TranqlyApp() {
                     <View style={[styles.authSummaryCard, themedInk]}>
                       <Text style={[styles.authSummaryLabel, themedAccent2]}>Signed in as</Text>
                       <Text style={[styles.authSummaryValue, themedTitle]}>{authUser.email}</Text>
+                      <Text style={[styles.authSummaryLabel, themedAccent2, { marginTop: 12 }]}>Sign-in method</Text>
+                      <Text style={[styles.authSummaryValue, themedTitle]}>{mobileAuthProviderLabel(authUser)}</Text>
                       <Text style={[styles.youCardMuted, themedMuted]}>
                         Your Tranqly account is connected on this device.
                       </Text>
@@ -6339,7 +6386,12 @@ function TranqlyApp() {
               </View>
 
               <View style={[styles.youCard, themedCard]}>
-                <View style={styles.authCardHeader}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: supportExpanded }}
+                  onPress={() => setSupportExpanded((value) => !value)}
+                  style={styles.authCardHeader}
+                >
                   <View style={{ flex: 1 }}>
                     <Text style={[styles.youSectionTitle, themedAccent2]}>Contact & Support</Text>
                     <Text style={[styles.youCardBody, themedBody]}>
@@ -6347,10 +6399,10 @@ function TranqlyApp() {
                     </Text>
                   </View>
                   <Text style={[styles.authStatusPill, { borderColor: appTheme.edge, color: appTheme.accent }]}>
-                    {authUser ? "Ready" : "Sign In"}
+                    {supportExpanded ? "Close" : "Contact"}
                   </Text>
-                </View>
-                <View style={styles.authForm}>
+                </Pressable>
+                {supportExpanded ? <View style={styles.authForm}>
                   <Text style={[styles.youInputLabel, themedTitle]}>What can we help with?</Text>
                   <View style={styles.supportCategoryWrap}>
                     {([
@@ -6423,7 +6475,7 @@ function TranqlyApp() {
                       <Text style={[styles.authMetaText, themedMuted]}>Terms</Text>
                     </Pressable>
                   </View>
-                </View>
+                </View> : null}
               </View>
 
               <View style={[styles.youCard, themedCard]}>

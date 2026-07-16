@@ -62,6 +62,14 @@ const THEME_COPY = Object.fromEntries(
 
 const THEMES_BY_UNLOCK = themesByUnlockOrder();
 
+function authProviderLabel(user: User) {
+  const providerIds = user.providerData.map((provider) => provider.providerId);
+  if (providerIds.includes("google.com")) return "Google";
+  if (providerIds.includes("apple.com")) return "Apple";
+  if (providerIds.includes("password")) return "Email and password";
+  return "Tranqly account";
+}
+
 function ThemeIcon({
   type,
   color,
@@ -214,6 +222,7 @@ export default function SettingsView() {
   const [tickets, setTickets] = useState<any[]>([]);
   const [supportBusy, setSupportBusy] = useState(false);
   const [supportNotice, setSupportNotice] = useState("");
+  const [supportExpanded, setSupportExpanded] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
   const [authNotice, setAuthNotice] = useState("");
   const [showEmailAuth, setShowEmailAuth] = useState(false);
@@ -423,6 +432,7 @@ export default function SettingsView() {
       setTicketSubject("");
       setTicketMessage("");
       setSupportNotice("Support ticket submitted. Reflection content was not attached.");
+      setSupportExpanded(false);
       if (user) setTickets(await listMySupportTickets(user.uid));
     } catch (error) {
       setSupportNotice(error instanceof Error ? error.message : "Could not submit ticket.");
@@ -478,7 +488,7 @@ export default function SettingsView() {
             <h2 className="text-sm font-semibold text-dim">Account</h2>
             <p className="mt-2 text-sm leading-relaxed text-faint">
               {user
-                ? `Signed in as ${user.email || "your Tranqly account"}.`
+                ? `Signed in with ${authProviderLabel(user)} as ${user.email || "your Tranqly account"}.`
                 : "Sign in to sync your reflections across devices and keep your sanctuary backed up."}
             </p>
           </div>
@@ -490,6 +500,8 @@ export default function SettingsView() {
           <div className="mt-3 rounded-2xl border border-edge bg-ink/55 p-4">
             <p className="text-xs font-black uppercase tracking-[0.18em] text-calm">Signed in as</p>
             <p className="mt-1 text-sm font-semibold text-fg">{user.email || "Tranqly account"}</p>
+            <p className="mt-3 text-xs font-black uppercase tracking-[0.18em] text-calm">Sign-in method</p>
+            <p className="mt-1 text-sm font-semibold text-fg">{authProviderLabel(user)}</p>
             <p className="mt-2 text-sm leading-relaxed text-dim">
               Your reflections are backed up and ready across devices.
             </p>
@@ -810,13 +822,23 @@ export default function SettingsView() {
       </section>
 
       <section className="order-8 rounded-xl2 border border-edge bg-card p-4 shadow-card">
-        <div className="mb-3">
-          <h2 className="text-2xl font-black tracking-tight">Support</h2>
-          <p className="mt-1 text-sm leading-relaxed text-dim">
-            Send account, billing, recording, or app issues to support. Tranqly attaches safe device metadata only, never reflection text.
-          </p>
-        </div>
-        <div className="grid gap-3">
+        <button
+          type="button"
+          aria-expanded={supportExpanded}
+          onClick={() => setSupportExpanded((value) => !value)}
+          className="flex w-full items-start justify-between gap-4 text-left"
+        >
+          <span>
+            <span className="block text-2xl font-black tracking-tight">Support</span>
+            <span className="mt-1 block text-sm leading-relaxed text-dim">
+              Send account, billing, recording, or app issues to support. Tranqly never attaches reflection text automatically.
+            </span>
+          </span>
+          <span className="shrink-0 rounded-full border border-edge bg-ink px-3 py-1 text-[10px] font-black uppercase tracking-wide text-dim">
+            {supportExpanded ? "Close" : "Contact"}
+          </span>
+        </button>
+        {supportExpanded ? <div className="mt-4 grid gap-3">
           <label className="block">
             <span className="mb-1.5 block text-xs font-black uppercase tracking-wide text-faint">Category</span>
             <select
@@ -856,8 +878,8 @@ export default function SettingsView() {
             {!user ? "Sign in to submit ticket" : supportBusy ? "Submitting..." : "Submit support ticket"}
           </button>
           {supportNotice ? <p className="text-sm font-semibold text-dim">{supportNotice}</p> : null}
-        </div>
-        {tickets.length ? (
+        </div> : null}
+        {supportExpanded && tickets.length ? (
           <div className="mt-4 rounded-2xl border border-edge bg-ink/50 p-3">
             <p className="text-xs font-black uppercase tracking-wide text-calm">Previous tickets</p>
             <div className="mt-2 flex flex-col gap-2">
