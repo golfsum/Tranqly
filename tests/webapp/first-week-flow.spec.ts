@@ -98,25 +98,28 @@ test("first week completion appears, stays readable, and week two prompt gates n
   }, buildExpiredFirstWeekState());
   await page.reload();
 
-  await expect(page.getByRole("dialog", { name: "Your first week is complete" })).toBeVisible();
-  await expect(page.getByText("Your first week is complete.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Your first week reflection" })).toBeVisible();
+  await expect(page.getByText("You've completed your first week.", { exact: true })).toBeVisible();
   await expect(page.getByText("7 reflection days", { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Forest Haven unlocked" })).toBeVisible();
   await expect(page.getByText("Yearly plan selected", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Begin Week Two" })).toBeVisible();
+  await expect(page.getByText("This Week You Gained", { exact: true })).toBeVisible();
+  await expect(page.getByText("Next Week You'll Discover", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Continue My Journey" })).toBeVisible();
 
-  await page.getByRole("button", { name: "Not now" }).click();
-  await expect(page.getByRole("dialog", { name: "Your first week is complete" })).toHaveCount(0);
-  await expect(page.getByText("Welcome back.", { exact: true }).first()).toBeVisible();
+  await page.getByRole("button", { name: "Maybe Later" }).click();
+  await expect(page.getByRole("dialog", { name: "Your first week reflection" })).toHaveCount(0);
+  await expect(page.locator("span:visible", { hasText: "Welcome back." }).first()).toBeVisible();
 
-  await page.getByLabel("Journey").click();
-  await expect(page.getByRole("button", { name: "Read Weekly Reflection" }).first()).toBeVisible();
-  await page.getByRole("button", { name: "Read Weekly Reflection" }).first().click();
+  await page.locator('[data-testid="desktop-tab-journey"]:visible, button[aria-label="Journey"]:visible').click();
+  const weeklyReflectionButton = page.locator("button:visible", { hasText: "Read Weekly Reflection" }).first();
+  await expect(weeklyReflectionButton).toBeVisible();
+  await weeklyReflectionButton.click();
   await expect(page.getByText("Weekly Reflection History", { exact: true })).toBeVisible();
   await expect(page.getByText("Your first week showed what helps you steady yourself", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Close" }).click();
 
-  await page.getByLabel("Insights").click();
+  await page.locator('[data-testid="desktop-tab-today"]:visible, button[aria-label="Insights"]:visible').click();
   await page.getByRole("textbox").fill("I want to keep reflecting this week.");
   await page.getByRole("button", { name: "Get Insights" }).click();
   await expect(page.getByRole("dialog", { name: "Tranqly Plus" })).toBeVisible();

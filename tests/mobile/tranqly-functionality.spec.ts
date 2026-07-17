@@ -172,14 +172,18 @@ test("day 7 completion appears and post-week reflection asks to begin week two",
   }, buildMobileExpiredFirstWeekState());
   await page.reload();
 
-  await expect(page.getByText("Your first week is complete.", { exact: true })).toBeVisible();
+  await expect(page.getByText("You've completed your first week.", { exact: true })).toBeVisible();
   await expect(page.getByText("7 reflection days", { exact: true })).toBeVisible();
   await expect(page.getByText("Forest Haven unlocked", { exact: true }).nth(1)).toBeVisible();
+  await expect(page.getByText("This Week You Gained", { exact: true })).toBeVisible();
+  await expect(page.getByText("Next Week You'll Discover", { exact: true })).toBeVisible();
+  await expect(page.getByText("Forest Haven, yours to keep", { exact: true })).toBeVisible();
+  await expect(page.getByText("Your journey has already begun. The weeks ahead are where your insights become even more personal.", { exact: true })).toBeVisible();
   await expect(page.getByText("Yearly plan selected", { exact: true })).toBeVisible();
-  await expect(page.getByText("Begin Week Two", { exact: true })).toBeVisible();
+  await expect(page.getByText("Continue My Journey", { exact: true })).toBeVisible();
 
-  await page.getByText("Not now", { exact: true }).click();
-  await expect(page.getByText("Your first week is complete.", { exact: true })).toHaveCount(0);
+  await page.getByText("Maybe Later", { exact: true }).click();
+  await expect(page.getByText("You've completed your first week.", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Welcome back.", { exact: true })).toBeVisible();
 
   await page.getByRole("tab", { name: "Journey" }).click();

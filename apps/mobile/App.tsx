@@ -34,7 +34,7 @@ import {
 } from "react-native";
 import Svg, { Circle, Defs, Ellipse, G, LinearGradient as SvgLinearGradient, Path, Rect, Stop } from "react-native-svg";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
-import Purchases, { LOG_LEVEL } from "react-native-purchases";
+import Purchases, { CustomerInfo, LOG_LEVEL } from "react-native-purchases";
 import { getPasswordStrength, isPasswordValid, passwordRuleItems } from "./lib/authRules";
 import {
   createMobileSupportTicket,
@@ -1553,6 +1553,16 @@ function currentWeekReflectionDays(entries: CheckIn[]) {
   ).size;
 }
 
+function CompletionCheckMark({ color, size = 18 }: { color: string; size?: number }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 20 20" fill="none">
+      <Circle cx={10} cy={10} r={9} fill={color} opacity={0.18} />
+      <Circle cx={10} cy={10} r={8.25} stroke={color} strokeWidth={1.5} />
+      <Path d="m6.4 10.2 2.25 2.25 4.95-5" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
+    </Svg>
+  );
+}
+
 function latestCompletedWeeklyPeriod(now = new Date()) {
   const end = new Date(now);
   end.setHours(23, 59, 59, 999);
@@ -2888,7 +2898,9 @@ function mobileAuthErrorMessage(error: unknown) {
   if (message.includes("INVALID_PASSWORD")) return "That email or password did not match.";
   if (message.includes("WEAK_PASSWORD")) return "Your password needs 8 characters, one uppercase letter, one number, and one special character.";
   if (message.includes("INVALID_EMAIL")) return "Please enter a valid email address.";
-  if (message.includes("OPERATION_NOT_ALLOWED")) return "Google Sign In is not enabled for Tranqly yet.";
+  if (message.includes("OPERATION_NOT_ALLOWED") || message.includes("CONFIGURATION_NOT_FOUND")) {
+    return "This sign-in method is not enabled for Tranqly yet.";
+  }
   if (message.includes("UNAUTHORIZED_DOMAIN") || message.includes("INVALID_CONTINUE_URI")) {
     return "Tranqly's sign-in domain is not authorized in Firebase yet.";
   }
@@ -2896,12 +2908,25 @@ function mobileAuthErrorMessage(error: unknown) {
     message.includes("INVALID_IDP_RESPONSE") ||
     message.includes("INVALID_ID_TOKEN") ||
     message.includes("INVALID_CREDENTIAL") ||
-    message.includes("AUDIENCE_MISMATCH")
+    message.includes("AUDIENCE_MISMATCH") ||
+    message.includes("MISSING_OR_INVALID_NONCE")
   ) {
-    return "Google Sign In is not configured for this Tranqly build yet.";
+    return "This sign-in method is not configured for this Tranqly build yet.";
   }
+  if (message.includes("Firebase is not configured")) return "Tranqly account sign-in is not configured in this build yet.";
   if (message.includes("NETWORK")) return "Tranqly could not connect right now. Please try again in a moment.";
   return "Tranqly could not sign you in right now. Please try again in a moment.";
+}
+
+function GoogleProviderIcon() {
+  return (
+    <Svg width={20} height={20} viewBox="0 0 24 24" accessibilityLabel="Google">
+      <Path fill="#4285F4" d="M21.6 12.23c0-.71-.06-1.4-.18-2.07H12v3.92h5.38a4.6 4.6 0 0 1-2 3.02v2.54h3.24c1.9-1.75 2.98-4.33 2.98-7.41Z" />
+      <Path fill="#34A853" d="M12 22c2.7 0 4.96-.9 6.62-2.36l-3.24-2.54c-.9.6-2.05.96-3.38.96-2.6 0-4.8-1.76-5.6-4.12H3.05v2.62A10 10 0 0 0 12 22Z" />
+      <Path fill="#FBBC05" d="M6.4 13.94A6 6 0 0 1 6.08 12c0-.67.11-1.32.32-1.94V7.44H3.05A10 10 0 0 0 2 12c0 1.61.38 3.14 1.05 4.56l3.35-2.62Z" />
+      <Path fill="#EA4335" d="M12 5.94c1.47 0 2.79.5 3.83 1.5l2.87-2.87A9.62 9.62 0 0 0 12 2a10 10 0 0 0-8.95 5.44l3.35 2.62c.8-2.36 3-4.12 5.6-4.12Z" />
+    </Svg>
+  );
 }
 
 function mobileAuthProviderLabel(user: MobileAuthUser) {
@@ -2969,12 +2994,14 @@ class AppErrorBoundary extends Component<{ children: ReactNode }, { failed: bool
 function GoogleAccountButton({
   busy,
   borderColor,
+  backgroundColor,
   textColor,
   onCredential,
   onError,
 }: {
   busy: boolean;
   borderColor: string;
+  backgroundColor: string;
   textColor: string;
   onCredential: (idToken?: string, accessToken?: string) => void;
   onError: (message: string) => void;
@@ -3007,8 +3034,9 @@ function GoogleAccountButton({
       accessibilityRole="button"
       disabled={!request || busy}
       onPress={() => void promptAsync()}
-      style={[styles.authSecondaryButton, { borderColor, opacity: !request || busy ? 0.55 : 1 }]}
+      style={[styles.authProviderButton, { borderColor, backgroundColor, opacity: !request || busy ? 0.55 : 1 }]}
     >
+      <GoogleProviderIcon />
       <Text style={[styles.authSecondaryText, { color: textColor }]}>{busy ? "Connecting..." : "Continue with Google"}</Text>
     </Pressable>
   );
@@ -3091,6 +3119,11 @@ function TranqlyApp() {
   const journeyCoachTargetRef = useRef<View>(null);
   const sanctuaryCoachTargetRef = useRef<View>(null);
   const purchasesConfiguredRef = useRef(false);
+  const [purchasesReady, setPurchasesReady] = useState(false);
+  const [storePrices, setStorePrices] = useState<{ monthly: string | null; yearly: string | null }>({
+    monthly: null,
+    yearly: null,
+  });
   const [showPremiumModal, setShowPremiumModal] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState<"yearly" | "monthly">("yearly");
   const [showSanctuaryModal, setShowSanctuaryModal] = useState(false);
@@ -3254,8 +3287,19 @@ function TranqlyApp() {
   ]);
 
   useEffect(() => {
-    if (!storageLoaded || Platform.OS !== "ios" || !REVENUECAT_IOS_API_KEY || purchasesConfiguredRef.current) return;
+    if (!storageLoaded || Platform.OS !== "ios") return;
+    if (!REVENUECAT_IOS_API_KEY) {
+      setPremium(false);
+      setPurchasesReady(false);
+      return;
+    }
+    if (purchasesConfiguredRef.current) return;
     let cancelled = false;
+    const updatePremiumAccess = (customerInfo: CustomerInfo) => {
+      if (!cancelled) {
+        setPremium(Boolean(customerInfo.entitlements.active[REVENUECAT_ENTITLEMENT_ID]));
+      }
+    };
 
     async function initializePurchases() {
       try {
@@ -3264,16 +3308,26 @@ function TranqlyApp() {
         if (!alreadyConfigured) {
           Purchases.configure({
             apiKey: REVENUECAT_IOS_API_KEY,
-            appUserID: authUser?.localId || undefined,
           });
         }
         purchasesConfiguredRef.current = true;
+        Purchases.addCustomerInfoUpdateListener(updatePremiumAccess);
         const customerInfo = await Purchases.getCustomerInfo();
-        if (!cancelled) {
-          setPremium(Boolean(customerInfo.entitlements.active[REVENUECAT_ENTITLEMENT_ID]));
+        updatePremiumAccess(customerInfo);
+        const offerings = await Purchases.getOfferings();
+        const currentOffering = offerings.current;
+        if (!cancelled && currentOffering) {
+          const monthlyPackage = currentOffering.monthly ?? currentOffering.availablePackages.find((item) => item.packageType === "MONTHLY");
+          const yearlyPackage = currentOffering.annual ?? currentOffering.availablePackages.find((item) => item.packageType === "ANNUAL");
+          setStorePrices({
+            monthly: monthlyPackage?.product.priceString ?? null,
+            yearly: yearlyPackage?.product.priceString ?? null,
+          });
+          setPurchasesReady(true);
         }
       } catch (error) {
         purchasesConfiguredRef.current = false;
+        setPurchasesReady(false);
         console.warn("RevenueCat initialization failed", error);
         logMobileApiError({
           errorCode: "revenuecat_initialization_failed",
@@ -3286,8 +3340,41 @@ function TranqlyApp() {
     void initializePurchases();
     return () => {
       cancelled = true;
+      Purchases.removeCustomerInfoUpdateListener(updatePremiumAccess);
     };
-  }, [authUser?.localId, storageLoaded]);
+  }, [storageLoaded]);
+
+  useEffect(() => {
+    if (!storageLoaded || Platform.OS !== "ios" || !purchasesReady || !purchasesConfiguredRef.current) return;
+    let cancelled = false;
+
+    async function syncRevenueCatIdentity() {
+      try {
+        const currentAppUserId = await Purchases.getAppUserID();
+        let customerInfo: CustomerInfo | null = null;
+        if (authUser?.localId && currentAppUserId !== authUser.localId) {
+          customerInfo = (await Purchases.logIn(authUser.localId)).customerInfo;
+        } else if (!authUser?.localId && !(await Purchases.isAnonymous())) {
+          customerInfo = await Purchases.logOut();
+        }
+        if (!cancelled && customerInfo) {
+          setPremium(Boolean(customerInfo.entitlements.active[REVENUECAT_ENTITLEMENT_ID]));
+        }
+      } catch (error) {
+        console.warn("RevenueCat identity sync failed", error);
+        logMobileApiError({
+          errorCode: "revenuecat_identity_sync_failed",
+          errorMessage: error instanceof Error ? error.message : "RevenueCat identity sync failed",
+          featureArea: "purchases",
+        });
+      }
+    }
+
+    void syncRevenueCatIdentity();
+    return () => {
+      cancelled = true;
+    };
+  }, [authUser?.localId, purchasesReady, storageLoaded]);
 
   const todayMood = moods[todayKey()] || null;
 
@@ -3556,6 +3643,11 @@ function TranqlyApp() {
       : Math.max(18, screenHeight - coachCardHeight - 132);
   const coachPointerStartY = activeCoachStep === "reflectionCoach" ? coachCardTop : coachCardTop + coachCardHeight;
   const micPulse = useRef(new Animated.Value(1)).current;
+  const firstWeekCardAnims = useRef([
+    new Animated.Value(0),
+    new Animated.Value(0),
+    new Animated.Value(0),
+  ]).current;
   const recordingStoppingRef = useRef(false);
   const recordingStartingRef = useRef(false);
   const notificationPromptAfterInsightRef = useRef(false);
@@ -4152,10 +4244,12 @@ function TranqlyApp() {
     options?: { accessToken?: string; nonce?: string; fallbackEmail?: string }
   ) {
     if (!FIREBASE_API_KEY) throw new Error("Firebase is not configured for this build.");
-    const useGoogleAccessToken = providerId === "google.com" && Boolean(options?.accessToken);
+    const hasIdToken = Boolean(idToken);
+    const hasGoogleAccessToken = providerId === "google.com" && Boolean(options?.accessToken);
+    if (!hasIdToken && !hasGoogleAccessToken) throw new Error("INVALID_CREDENTIAL");
     const parameters = [
-      !useGoogleAccessToken && idToken ? `id_token=${encodeURIComponent(idToken)}` : "",
-      useGoogleAccessToken && options?.accessToken ? `access_token=${encodeURIComponent(options.accessToken)}` : "",
+      idToken ? `id_token=${encodeURIComponent(idToken)}` : "",
+      hasGoogleAccessToken && options?.accessToken ? `access_token=${encodeURIComponent(options.accessToken)}` : "",
       options?.nonce ? `nonce=${encodeURIComponent(options.nonce)}` : "",
       `providerId=${encodeURIComponent(providerId)}`,
     ].filter(Boolean);
@@ -4186,7 +4280,10 @@ function TranqlyApp() {
         featureArea: "auth",
         statusCode: response.status,
         route: "firebase/accounts:signInWithIdp",
-        metadata: { providerId, credentialType: useGoogleAccessToken ? "access_token" : "id_token" },
+        metadata: {
+          providerId,
+          credentialType: hasIdToken && hasGoogleAccessToken ? "id_token_and_access_token" : hasIdToken ? "id_token" : "access_token",
+        },
       });
       throw new Error(errorCode);
     }
@@ -4328,7 +4425,7 @@ function TranqlyApp() {
   async function startCheckout() {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     if (Platform.OS === "ios") {
-      if (!REVENUECAT_IOS_API_KEY || !purchasesConfiguredRef.current) {
+      if (!REVENUECAT_IOS_API_KEY || !purchasesConfiguredRef.current || !purchasesReady) {
         Alert.alert(
           "Purchases unavailable",
           "App Store purchases are not configured for this build yet."
@@ -4339,6 +4436,14 @@ function TranqlyApp() {
       try {
         const offerings = await Purchases.getOfferings();
         const currentOffering = offerings.current;
+        if (currentOffering) {
+          const monthlyPackage = currentOffering.monthly ?? currentOffering.availablePackages.find((item) => item.packageType === "MONTHLY");
+          const yearlyPackage = currentOffering.annual ?? currentOffering.availablePackages.find((item) => item.packageType === "ANNUAL");
+          setStorePrices({
+            monthly: monthlyPackage?.product.priceString ?? null,
+            yearly: yearlyPackage?.product.priceString ?? null,
+          });
+        }
         const planPackage = selectedPlan === "yearly"
           ? currentOffering?.annual ?? currentOffering?.availablePackages.find((item) => item.packageType === "ANNUAL")
           : currentOffering?.monthly ?? currentOffering?.availablePackages.find((item) => item.packageType === "MONTHLY");
@@ -4395,7 +4500,7 @@ function TranqlyApp() {
 
   async function restoreAppStorePurchases() {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    if (Platform.OS !== "ios" || !REVENUECAT_IOS_API_KEY || !purchasesConfiguredRef.current) {
+    if (Platform.OS !== "ios" || !REVENUECAT_IOS_API_KEY || !purchasesConfiguredRef.current || !purchasesReady) {
       Alert.alert("Restore unavailable", "App Store purchases are not configured for this build yet.");
       return;
     }
@@ -4557,6 +4662,19 @@ function TranqlyApp() {
       : firstWeekReflectionDays === 1
         ? ["1 reflection day", "Weekly reflection still building", "1 moment worth revisiting"]
         : ["Your space is still here", "Your weekly reflection is waiting to begin"];
+  const firstWeekGains = [
+    firstWeekReflectionDays >= 3 ? "Your first Weekly Reflection" : "A weekly reflection beginning to form",
+    "Personalized AI insights",
+    firstWeekReflectionDays >= 3 ? "Your first emotional patterns" : "The first moments Tranqly can learn from",
+    ...(firstWeekReflectionDays >= 7 ? ["Forest Haven, yours to keep"] : []),
+    `${firstWeekReflectionDays || "A few"} meaningful reflection ${firstWeekReflectionDays === 1 ? "day" : "days"}`,
+  ];
+  const nextWeekDiscoveries = [
+    "Deeper patterns across more of your days",
+    "Reflections that remember more about you",
+    "A Weekly Reflection that becomes more personal",
+    "Progress toward your next sanctuary",
+  ];
   const firstWeekReflectionText = (firstWeekInsight?.insight ??
     (firstWeekEntries.length
       ? "You took time to check in with yourself this week. What you shared may not form a full pattern yet, but it still gives you something meaningful to return to."
@@ -4565,7 +4683,9 @@ function TranqlyApp() {
     .replace(/Across these seven reflections/i, "Across your reflections this week")
     .replace(/You were beginning to notice which moments helped you feel steadier and return to yourself\./i, "You began noticing which moments helped you feel steadier and more like yourself.");
   const firstWeekPlanLabel = selectedPlan === "yearly" ? "Yearly plan selected" : "Monthly plan selected";
-  const firstWeekPlanBilling = selectedPlan === "yearly" ? "$59.99 billed annually" : "$5.99 billed monthly";
+  const firstWeekPlanBilling = selectedPlan === "yearly"
+    ? storePrices.yearly ? `${storePrices.yearly} billed annually` : "Loading App Store price..."
+    : storePrices.monthly ? `${storePrices.monthly} billed monthly` : "Loading App Store price...";
   function markFirstWeekConversionSeen() {
     setComplimentaryAccess((current) =>
       current
@@ -4576,6 +4696,22 @@ function TranqlyApp() {
         : current
     );
   }
+
+  useEffect(() => {
+    if (!showFirstWeekCompleteModal) return;
+    firstWeekCardAnims.forEach((value) => value.setValue(0));
+    Animated.stagger(
+      100,
+      firstWeekCardAnims.map((value) =>
+        Animated.spring(value, {
+          toValue: 1,
+          friction: 8,
+          tension: 70,
+          useNativeDriver: true,
+        })
+      )
+    ).start();
+  }, [firstWeekCardAnims, showFirstWeekCompleteModal]);
   function promptWeekTwoContinuation() {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setGrowthNotice("Your first week is complete. Ready for another one?");
@@ -5836,9 +5972,9 @@ function TranqlyApp() {
                     {Platform.OS === "ios" ? (
                       <AppleAuthentication.AppleAuthenticationButton
                         buttonType={AppleAuthentication.AppleAuthenticationButtonType.CONTINUE}
-                        buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.WHITE}
+                        buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
                         cornerRadius={14}
-                        style={{ width: "100%", height: 50, opacity: authBusy ? 0.55 : 1 }}
+                        style={{ width: "100%", height: 52, opacity: authBusy ? 0.55 : 1 }}
                         onPress={() => void signInWithApple()}
                       />
                     ) : null}
@@ -5846,15 +5982,17 @@ function TranqlyApp() {
                       <GoogleAccountButton
                         busy={authBusy}
                         borderColor={appTheme.edge}
+                        backgroundColor={appTheme.ink}
                         textColor={appTheme.fg}
                         onCredential={(idToken, accessToken) => void signInWithGoogleCredential(idToken, accessToken)}
                         onError={setAuthNotice}
                       />
                     ) : (
                       <Pressable
-                        style={[styles.authSecondaryButton, { borderColor: appTheme.edge }]}
+                        style={[styles.authProviderButton, { borderColor: appTheme.edge, backgroundColor: appTheme.ink }]}
                         onPress={() => setAuthNotice("Google Sign In needs its public OAuth client ID in this build.")}
                       >
+                        <GoogleProviderIcon />
                         <Text style={[styles.authSecondaryText, themedAccent]}>Continue with Google</Text>
                       </Pressable>
                     )}
@@ -6983,9 +7121,19 @@ function TranqlyApp() {
                 <View style={styles.firstWeekSheetHeader}>
                   <View style={styles.modalHandle} />
                 <View style={[styles.premiumHeaderRow, { marginBottom: 0 }]}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.authSummaryLabel, themedAccent2]}>Day 7</Text>
-                    <Text style={[styles.premiumModalTitle, themedTitle]}>Your first week is complete.</Text>
+                  <View style={styles.firstWeekHeroCopy}>
+                    <View style={[styles.firstWeekCelebrationIcon, { borderColor: appTheme.helperEdge, backgroundColor: appTheme.helperBg }]}>
+                      <Image source={TRANQLY_LOGO} style={styles.firstWeekCelebrationLogo} resizeMode="contain" />
+                    </View>
+                    <Text style={[styles.authSummaryLabel, themedAccent2]}>Your first week</Text>
+                    <Text style={[styles.firstWeekHeroTitle, themedTitle]}>
+                      {firstWeekReflectionDays >= 7 ? "You've completed your first week." : "Your first week is ready to revisit."}
+                    </Text>
+                    <Text style={[styles.firstWeekHeroSubtitle, themedBody]}>
+                      {firstWeekReflectionDays >= 7
+                        ? "Seven days ago you began reflecting. Tranqly is already beginning to understand what helps you feel more like yourself."
+                        : "What you shared has given Tranqly a meaningful place to begin. Your reflections will always be here when you want to return."}
+                    </Text>
                   </View>
                   <Pressable
                     accessibilityLabel="Close first week summary"
@@ -7001,10 +7149,28 @@ function TranqlyApp() {
                   contentContainerStyle={styles.firstWeekSheetScroll}
                 >
                 <View style={styles.weeklySummaryGrid}>
-                  {firstWeekSummaryItems.map((item) => (
-                    <View key={item} style={[styles.weeklySummaryPill, { borderColor: appTheme.edge, backgroundColor: appTheme.ink }]}>
-                      <Text style={[styles.weeklySummaryText, themedMuted]}>{item}</Text>
-                    </View>
+                  {firstWeekSummaryItems.map((item, index) => (
+                    <Animated.View
+                      key={item}
+                      style={[
+                        styles.weeklySummaryPill,
+                        {
+                          borderColor: appTheme.helperEdge,
+                          backgroundColor: appTheme.helperBg,
+                          opacity: firstWeekCardAnims[Math.min(index, firstWeekCardAnims.length - 1)],
+                          transform: [{
+                            scale: firstWeekCardAnims[Math.min(index, firstWeekCardAnims.length - 1)].interpolate({
+                              inputRange: [0, 1],
+                              outputRange: [0.94, 1],
+                            }),
+                          }],
+                          shadowColor: appTheme.accent,
+                        },
+                      ]}
+                    >
+                      <CompletionCheckMark color={appTheme.accent2} size={17} />
+                      <Text style={[styles.weeklySummaryText, themedTitle]}>{item}</Text>
+                    </Animated.View>
                   ))}
                 </View>
                 {firstWeekReflectionDays > 0 && firstWeekReflectionDays < 7 ? (
@@ -7042,21 +7208,59 @@ function TranqlyApp() {
                       <Text style={[styles.authSummaryLabel, themedAccent2]}>Seven days of reflection</Text>
                       <Text style={[styles.weeklyModalTitle, themedTitle]}>Forest Haven unlocked</Text>
                       <Text style={[styles.weeklyModalBody, themedBody]}>
-                        You made space for yourself every day this week. Forest Haven is now available in your sanctuary collection.
+                        You've started building your sanctuary collection. Forest Haven is now yours forever.
                       </Text>
                     </View>
                   </View>
                 ) : null}
-                <Text style={[styles.firstWeekContinueTitle, themedTitle]}>
-                  Continue your journey
+                <View style={[styles.firstWeekValueCard, { borderColor: appTheme.edge, backgroundColor: appTheme.ink }]}>
+                  <Text style={[styles.firstWeekSectionTitle, themedTitle]}>This Week You Gained</Text>
+                  {firstWeekGains.map((item) => (
+                    <View key={item} style={styles.firstWeekValueRow}>
+                      <CompletionCheckMark color={appTheme.accent2} size={18} />
+                      <Text style={[styles.firstWeekValueText, themedBody]}>{item}</Text>
+                    </View>
+                  ))}
+                </View>
+
+                <View style={[styles.firstWeekValueCard, { borderColor: appTheme.helperEdge, backgroundColor: appTheme.helperBg }]}>
+                  <Text style={[styles.firstWeekSectionTitle, themedTitle]}>Next Week You'll Discover</Text>
+                  {nextWeekDiscoveries.map((item) => (
+                    <View key={item} style={styles.firstWeekValueRow}>
+                      <View style={[styles.firstWeekFutureDot, { backgroundColor: appTheme.accent }]} />
+                      <Text style={[styles.firstWeekValueText, themedBody]}>{item}</Text>
+                    </View>
+                  ))}
+                </View>
+
+                <Text style={[styles.firstWeekContinueTitle, themedTitle]}>Continue Your Journey</Text>
+                <Text style={[styles.firstWeekContinueBody, themedBody]}>
+                  Every reflection teaches Tranqly a little more about you. The more you share, the more personal your insights become.
                 </Text>
-                <Text style={[styles.premiumPriceNote, themedMuted]}>
-                  Keep receiving thoughtful responses, weekly reflections, and insights that build on what you share.
-                </Text>
-                <Text style={[styles.premiumPriceNote, themedMuted]}>
-                  Your first week and existing reflections will remain yours whether you continue or not.
+                <Text style={[styles.firstWeekEmotionalBridge, { color: appTheme.accent2 }]}>
+                  Your journey has already begun. The weeks ahead are where your insights become even more personal.
                 </Text>
                 <View style={styles.premiumPlanGrid}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: selectedPlan === "yearly" }}
+                    onPress={() => setSelectedPlan("yearly")}
+                    style={[
+                      styles.premiumPlanCard,
+                      styles.firstWeekYearlyPlanCard,
+                      { borderColor: selectedPlan === "yearly" ? appTheme.accent : appTheme.edge },
+                      selectedPlan === "yearly" && { backgroundColor: appTheme.helperBg, shadowColor: appTheme.accent },
+                    ]}
+                  >
+                    <View style={styles.premiumPlanHeader}>
+                      <Text style={[styles.premiumPlanName, themedTitle]}>Yearly</Text>
+                      <Text style={[styles.premiumPlanBadge, { color: appTheme.accent2 }]}>BEST VALUE</Text>
+                    </View>
+                    <Text style={[styles.premiumPlanPrice, themedTitle]}>
+                      {storePrices.yearly ? `${storePrices.yearly} per year` : "Loading price..."}
+                    </Text>
+                    <Text style={[styles.premiumPlanDetail, themedMuted]}>About $5 per month. Save compared to monthly.</Text>
+                  </Pressable>
                   <Pressable
                     accessibilityRole="button"
                     accessibilityState={{ selected: selectedPlan === "monthly" }}
@@ -7068,34 +7272,26 @@ function TranqlyApp() {
                     ]}
                   >
                     <Text style={[styles.premiumPlanName, themedTitle]}>Monthly</Text>
-                    <Text style={[styles.premiumPlanPrice, themedTitle]}>$5.99 per month</Text>
-                    <Text style={[styles.premiumPlanDetail, themedMuted]}>Billed monthly</Text>
-                  </Pressable>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: selectedPlan === "yearly" }}
-                    onPress={() => setSelectedPlan("yearly")}
-                    style={[
-                      styles.premiumPlanCard,
-                      { borderColor: selectedPlan === "yearly" ? appTheme.accent : appTheme.edge },
-                      selectedPlan === "yearly" && { backgroundColor: appTheme.helperBg },
-                    ]}
-                  >
-                    <View style={styles.premiumPlanHeader}>
-                      <Text style={[styles.premiumPlanName, themedTitle]}>Yearly</Text>
-                      <Text style={[styles.premiumPlanBadge, { color: appTheme.accent2 }]}>BEST VALUE</Text>
-                    </View>
-                    <Text style={[styles.premiumPlanPrice, themedTitle]}>$59.99 per year</Text>
-                    <Text style={[styles.premiumPlanDetail, themedMuted]}>About $5 per month</Text>
+                    <Text style={[styles.premiumPlanPrice, themedTitle]}>
+                      {storePrices.monthly ? `${storePrices.monthly} per month` : "Loading price..."}
+                    </Text>
+                    <Text style={[styles.premiumPlanDetail, themedMuted]}>Continue month to month.</Text>
                   </Pressable>
                 </View>
+                <Text style={[styles.firstWeekOwnershipNote, themedMuted]}>
+                  Your first week, Weekly Reflection, and unlocked sanctuaries remain yours whether you continue or not.
+                </Text>
                 </ScrollView>
                 <View style={[styles.firstWeekPurchaseFooter, { borderColor: appTheme.edge, backgroundColor: appTheme.card }]}>
                 <View style={[styles.firstWeekSelectedPlan, { borderColor: appTheme.edge, backgroundColor: appTheme.ink }]}>
                   <Text style={[styles.firstWeekSelectedPlanTitle, themedTitle]}>{firstWeekPlanLabel}</Text>
                   <Text style={[styles.firstWeekSelectedPlanDetail, themedMuted]}>{firstWeekPlanBilling}</Text>
                 </View>
-                <Pressable onPress={() => { markFirstWeekConversionSeen(); void startCheckout(); }} disabled={checkoutBusy} style={styles.premiumUpgradeButton}>
+                <Pressable
+                  onPress={() => { markFirstWeekConversionSeen(); void startCheckout(); }}
+                  disabled={checkoutBusy || (Platform.OS === "ios" && !purchasesReady)}
+                  style={[styles.premiumUpgradeButton, (checkoutBusy || (Platform.OS === "ios" && !purchasesReady)) && { opacity: 0.55 }]}
+                >
                   <LinearGradient
                     colors={[appTheme.button, appTheme.button]}
                     start={{ x: 0, y: 0 }}
@@ -7103,14 +7299,14 @@ function TranqlyApp() {
                     style={styles.premiumUpgradeGradient}
                   >
                     <Text style={[styles.premiumUpgradeText, themedTitle]}>
-                      {checkoutBusy ? "Opening checkout..." : "Begin Week Two"}
+                      {checkoutBusy ? "Opening checkout..." : Platform.OS === "ios" && !purchasesReady ? "Loading App Store..." : "Continue My Journey"}
                     </Text>
                   </LinearGradient>
                 </Pressable>
                 <Pressable onPress={markFirstWeekConversionSeen} style={styles.premiumCloseButton}>
-                  <Text style={[styles.premiumCloseText, themedMuted]}>Not now</Text>
+                  <Text style={[styles.premiumCloseText, themedMuted]}>Maybe Later</Text>
                 </Pressable>
-                <Pressable onPress={() => void restoreAppStorePurchases()} disabled={checkoutBusy} style={styles.premiumCloseButton}>
+                <Pressable onPress={() => void restoreAppStorePurchases()} disabled={checkoutBusy || (Platform.OS === "ios" && !purchasesReady)} style={styles.premiumCloseButton}>
                   <Text style={[styles.premiumCloseText, themedAccent]}>Restore purchases</Text>
                 </Pressable>
                 <View style={{ flexDirection: "row", justifyContent: "center", gap: 24 }}>
@@ -7178,8 +7374,10 @@ function TranqlyApp() {
                       <Text style={[styles.premiumPlanName, themedTitle]}>Yearly</Text>
                       <Text style={[styles.premiumPlanBadge, { color: appTheme.accent2 }]}>BEST VALUE</Text>
                     </View>
-                    <Text style={[styles.premiumPlanPrice, themedTitle]}>$59.99 per year</Text>
-                    <Text style={[styles.premiumPlanDetail, themedMuted]}>About $5 per month</Text>
+                    <Text style={[styles.premiumPlanPrice, themedTitle]}>
+                      {storePrices.yearly ? `${storePrices.yearly} per year` : "Loading price..."}
+                    </Text>
+                    <Text style={[styles.premiumPlanDetail, themedMuted]}>Billed annually</Text>
                   </Pressable>
                   <Pressable
                     onPress={() => setSelectedPlan("monthly")}
@@ -7190,14 +7388,16 @@ function TranqlyApp() {
                     ]}
                   >
                     <Text style={[styles.premiumPlanName, themedTitle]}>Monthly</Text>
-                    <Text style={[styles.premiumPlanPrice, themedTitle]}>$5.99 per month</Text>
+                    <Text style={[styles.premiumPlanPrice, themedTitle]}>
+                      {storePrices.monthly ? `${storePrices.monthly} per month` : "Loading price..."}
+                    </Text>
                     <Text style={[styles.premiumPlanDetail, themedMuted]}>Billed monthly</Text>
                   </Pressable>
                 </View>
                 <Pressable
                   onPress={startCheckout}
-                  disabled={checkoutBusy}
-                  style={styles.premiumUpgradeButton}
+                  disabled={checkoutBusy || (Platform.OS === "ios" && !purchasesReady)}
+                  style={[styles.premiumUpgradeButton, (checkoutBusy || (Platform.OS === "ios" && !purchasesReady)) && { opacity: 0.55 }]}
                 >
                   <LinearGradient
                     colors={[appTheme.button, appTheme.button]}
@@ -7206,7 +7406,7 @@ function TranqlyApp() {
                     style={styles.premiumUpgradeGradient}
                   >
                     <Text style={[styles.premiumUpgradeText, themedTitle]}>
-                      {checkoutBusy ? "Opening checkout..." : "Begin Week Two"}
+                      {checkoutBusy ? "Opening checkout..." : Platform.OS === "ios" && !purchasesReady ? "Loading App Store..." : "Begin Week Two"}
                     </Text>
                   </LinearGradient>
                 </Pressable>
@@ -7221,7 +7421,7 @@ function TranqlyApp() {
                 </Pressable>
                 <Pressable
                   onPress={() => void restoreAppStorePurchases()}
-                  disabled={checkoutBusy}
+                  disabled={checkoutBusy || (Platform.OS === "ios" && !purchasesReady)}
                   style={styles.premiumCloseButton}
                 >
                   <Text style={[styles.premiumCloseText, themedAccent]}>Restore purchases</Text>
@@ -9818,6 +10018,17 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "rgba(255,255,255,0.03)",
   },
+  authProviderButton: {
+    width: "100%",
+    minHeight: 52,
+    borderRadius: 14,
+    borderWidth: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+    paddingHorizontal: 18,
+  },
   authSecondaryText: {
     fontSize: 14,
     fontWeight: "900",
@@ -10677,6 +10888,36 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "rgba(255,255,255,0.10)",
   },
+  firstWeekHeroCopy: {
+    flex: 1,
+    alignItems: "flex-start",
+  },
+  firstWeekCelebrationIcon: {
+    width: 46,
+    height: 46,
+    borderRadius: 16,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 10,
+  },
+  firstWeekCelebrationLogo: {
+    width: 34,
+    height: 34,
+  },
+  firstWeekHeroTitle: {
+    marginTop: 5,
+    fontSize: 27,
+    lineHeight: 32,
+    fontWeight: "900",
+    letterSpacing: -0.8,
+  },
+  firstWeekHeroSubtitle: {
+    marginTop: 8,
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: "700",
+  },
   firstWeekSheetScroll: {
     padding: 18,
     paddingBottom: 28,
@@ -10766,6 +11007,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     alignItems: "center",
     justifyContent: "center",
+    gap: 6,
+    shadowOpacity: 0.2,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
   weeklySummaryText: {
     fontSize: 10,
@@ -10814,6 +11060,63 @@ const styles = StyleSheet.create({
     fontSize: 22,
     lineHeight: 27,
     fontWeight: "900",
+  },
+  firstWeekContinueBody: {
+    marginTop: 8,
+    fontSize: 14,
+    lineHeight: 21,
+    fontWeight: "700",
+  },
+  firstWeekEmotionalBridge: {
+    marginTop: 10,
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: "900",
+  },
+  firstWeekValueCard: {
+    marginTop: 12,
+    borderRadius: 20,
+    borderWidth: 1,
+    padding: 14,
+    gap: 10,
+  },
+  firstWeekSectionTitle: {
+    fontSize: 17,
+    lineHeight: 21,
+    fontWeight: "900",
+    marginBottom: 2,
+  },
+  firstWeekValueRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+  },
+  firstWeekValueText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "700",
+  },
+  firstWeekFutureDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 999,
+    marginLeft: 5,
+    marginRight: 6,
+  },
+  firstWeekYearlyPlanCard: {
+    minHeight: 102,
+    shadowOpacity: 0.22,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 3,
+  },
+  firstWeekOwnershipNote: {
+    marginTop: 8,
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: "700",
+    textAlign: "center",
   },
   firstWeekSelectedPlan: {
     borderWidth: 1,
