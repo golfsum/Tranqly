@@ -159,7 +159,7 @@ export default function AdminTroubleshooting() {
   }
 
   return (
-    <section className="rounded-[28px] border border-edge bg-card p-5 shadow-card">
+    <section className="min-w-0 max-w-full overflow-hidden rounded-[28px] border border-edge bg-card p-4 shadow-card sm:p-5">
       <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
         <div>
           <p className="text-[11px] font-black uppercase tracking-[0.18em] text-calm">
@@ -355,10 +355,31 @@ export default function AdminTroubleshooting() {
         </div>
       </div>
 
-      <div className="mt-5 grid gap-4 xl:grid-cols-2">
-        <div className="rounded-2xl border border-edge bg-ink/50 p-3">
+      <div className="mt-5 grid min-w-0 gap-4 xl:grid-cols-2">
+        <div className="min-w-0 rounded-2xl border border-edge bg-ink/50 p-3">
           <h3 className="text-sm font-black text-calm">Users overview</h3>
-          <div className="mt-3 overflow-auto">
+          <div className="mt-3 grid gap-2 md:hidden">
+            {users.map((user) => (
+              <article key={user.id} className="min-w-0 rounded-xl border border-edge bg-card p-3">
+                <div className="flex min-w-0 items-start justify-between gap-3">
+                  <p className="min-w-0 break-all text-xs font-black">{user.email ?? "No email"}</p>
+                  <span className="shrink-0 rounded-full border border-edge bg-ink px-2 py-1 text-[9px] font-black uppercase text-calm">
+                    {user.plan ?? "free"}
+                  </span>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                  <div><p className="text-[9px] font-black uppercase tracking-wide text-faint">Platform</p><p className="mt-0.5 break-words">{user.platformLastUsed ?? "unknown"}</p></div>
+                  <div><p className="text-[9px] font-black uppercase tracking-wide text-faint">Sanctuary</p><p className="mt-0.5 break-words">{user.selectedTheme ?? "twilight"}</p></div>
+                  <div><p className="text-[9px] font-black uppercase tracking-wide text-faint">Streak</p><p className="mt-0.5">{user.streakCount ?? 0}</p></div>
+                  <div><p className="text-[9px] font-black uppercase tracking-wide text-faint">Reflections</p><p className="mt-0.5">{user.reflectionCount ?? 0}</p></div>
+                </div>
+                <p className="mt-3 break-words text-[10px] leading-relaxed text-faint">Last active: {formatDate(user.lastActiveAt)}</p>
+                {user.lastErrorCode ? <p className="mt-1 break-words text-[10px] text-rose-200">Last error: {user.lastErrorCode}</p> : null}
+              </article>
+            ))}
+            {!users.length ? <p className="py-6 text-center text-sm text-faint">No safe user profiles found yet.</p> : null}
+          </div>
+          <div className="mt-3 hidden max-w-full overflow-x-auto overscroll-x-contain md:block">
             <table className="w-full min-w-[720px] text-left text-xs">
               <thead className="text-faint">
                 <tr>
@@ -392,7 +413,7 @@ export default function AdminTroubleshooting() {
           </div>
         </div>
 
-        <div className="grid gap-4">
+        <div className="min-w-0 grid gap-4">
           <div className="rounded-2xl border border-edge bg-ink/50 p-3">
             <h3 className="text-sm font-black text-calm">Open support tickets</h3>
             <div className="mt-3 flex flex-col gap-2">

@@ -23,7 +23,7 @@ interface MobileProfileInput {
   onboardingCoachStep: "mic" | "journey" | "sanctuary" | null;
   onboardingSkippedAt: string | null;
   onboardingCompletedAt: string | null;
-  subscriptionStatus: "active" | "free";
+  subscriptionStatus: "active" | "trial" | "free";
   plan: "premium" | "free";
   appVersion: string;
   osVersion: string;

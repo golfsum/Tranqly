@@ -201,7 +201,7 @@ export default function CoachChat({
 
     if (!allowed) {
       setGrowthNotice(
-        "Your reflection has been saved. Begin Week Two when you are ready for more Tranqly insights."
+        "Your reflection has been saved. Continue your journey when you are ready for more Tranqly insights."
       );
       window.setTimeout(() => setGrowthNotice(""), 6500);
       onNeedPremium();

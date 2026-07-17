@@ -240,7 +240,7 @@ export default function FirstWeekCompleteModal({
                 onClick={() => onContinue(selectedPlan)}
                 className="min-h-[50px] w-full rounded-2xl bg-gradient-to-r from-calm to-sea text-sm font-black text-ink shadow-glow"
               >
-                Continue My Journey
+                Continue my Journey
               </button>
               <button
                 type="button"

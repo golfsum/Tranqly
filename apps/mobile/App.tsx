@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import * as AppleAuthentication from "expo-apple-authentication";
 import * as Google from "expo-auth-session/providers/google";
 import { Audio } from "expo-av";
@@ -34,7 +35,7 @@ import {
 } from "react-native";
 import Svg, { Circle, Defs, Ellipse, G, LinearGradient as SvgLinearGradient, Path, Rect, Stop } from "react-native-svg";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
-import Purchases, { CustomerInfo, LOG_LEVEL } from "react-native-purchases";
+import Purchases, { CustomerInfo, LOG_LEVEL, PurchasesOffering, PurchasesPackage } from "react-native-purchases";
 import { getPasswordStrength, isPasswordValid, passwordRuleItems } from "./lib/authRules";
 import {
   createMobileSupportTicket,
@@ -654,11 +655,44 @@ const APP_THEME_PALETTES: Partial<Record<SanctuaryThemeKey, AppThemePalette>> & 
 const STORE_KEY = "tranqly-mobile-v1";
 const FREE_AI_INSIGHTS_PER_DAY = 5;
 const TRANQLY_LOGO = require("./assets/images/tranqly_logo.png");
-const configuredRevenueCatKey = process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY?.trim() ?? "";
+const configuredRevenueCatKey =
+  process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY?.trim() || "";
 const REVENUECAT_IOS_API_KEY = configuredRevenueCatKey.startsWith("appl_")
   ? configuredRevenueCatKey
   : "";
-const REVENUECAT_ENTITLEMENT_ID = process.env.EXPO_PUBLIC_REVENUECAT_ENTITLEMENT_ID?.trim() || "plus";
+const REVENUECAT_ENTITLEMENT_ID =
+  process.env.EXPO_PUBLIC_REVENUECAT_ENTITLEMENT_ID?.trim() || "plus";
+const REVENUECAT_CONFIG_ERROR = !configuredRevenueCatKey
+  ? "App Store billing is not configured in this build."
+  : !configuredRevenueCatKey.startsWith("appl_")
+    ? "App Store billing needs the RevenueCat public iOS SDK key."
+    : "";
+
+function getValidatedStorePackages(offering: PurchasesOffering): {
+  monthlyPackage: PurchasesPackage;
+  yearlyPackage: PurchasesPackage;
+} {
+  const monthlyPackage = offering.monthly ?? offering.availablePackages.find((item) => item.packageType === "MONTHLY");
+  const yearlyPackage = offering.annual ?? offering.availablePackages.find((item) => item.packageType === "ANNUAL");
+
+  if (!monthlyPackage || !yearlyPackage) {
+    throw new Error("RevenueCat current offering must include monthly and annual packages.");
+  }
+  if (monthlyPackage.product.identifier === yearlyPackage.product.identifier) {
+    throw new Error("RevenueCat monthly and annual packages must use different App Store products.");
+  }
+  if (monthlyPackage.product.subscriptionPeriod && monthlyPackage.product.subscriptionPeriod !== "P1M") {
+    throw new Error("RevenueCat monthly package is not attached to a monthly App Store product.");
+  }
+  if (yearlyPackage.product.subscriptionPeriod && yearlyPackage.product.subscriptionPeriod !== "P1Y") {
+    throw new Error("RevenueCat annual package is not attached to a yearly App Store product.");
+  }
+  if (yearlyPackage.product.price <= monthlyPackage.product.price) {
+    throw new Error("RevenueCat annual package returned an invalid full-year price.");
+  }
+
+  return { monthlyPackage, yearlyPackage };
+}
 const configuredApiBaseUrl =
   process.env.EXPO_PUBLIC_API_BASE_URL ||
   (Constants.expoConfig?.extra?.apiBaseUrl as string | undefined) ||
@@ -673,8 +707,20 @@ const FIREBASE_PROJECT_ID =
   process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ||
   (Constants.expoConfig?.extra?.firebaseProjectId as string | undefined) ||
   "";
-const GOOGLE_IOS_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID?.trim() || "";
-const GOOGLE_WEB_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID?.trim() || "";
+const GOOGLE_IOS_CLIENT_ID =
+  process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID?.trim() ||
+  (Constants.expoConfig?.extra?.googleIosClientId as string | undefined)?.trim() ||
+  "";
+const GOOGLE_WEB_CLIENT_ID =
+  process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID?.trim() ||
+  (Constants.expoConfig?.extra?.googleWebClientId as string | undefined)?.trim() ||
+  "";
+const googleClientProject = (clientId: string) => clientId.match(/^(\d+)-/)?.[1] ?? "";
+const GOOGLE_CLIENT_PROJECT_MISMATCH = Boolean(
+  GOOGLE_IOS_CLIENT_ID &&
+    GOOGLE_WEB_CLIENT_ID &&
+    googleClientProject(GOOGLE_IOS_CLIENT_ID) !== googleClientProject(GOOGLE_WEB_CLIENT_ID)
+);
 const devHostUri =
   (Constants.expoConfig as { hostUri?: string } | undefined)?.hostUri ||
   (Constants.manifest2?.extra?.expoGo as { debuggerHost?: string } | undefined)
@@ -687,6 +733,12 @@ const API_BASE_URL =
 
 if (__DEV__) {
   console.info("Tranqly mobile API base URL:", API_BASE_URL || "(not configured)");
+  console.info("Tranqly auth configuration:", {
+    firebase: Boolean(FIREBASE_API_KEY && FIREBASE_PROJECT_ID),
+    googleIos: Boolean(GOOGLE_IOS_CLIENT_ID),
+    googleWeb: Boolean(GOOGLE_WEB_CLIENT_ID),
+    googleProjectMatch: !GOOGLE_CLIENT_PROJECT_MISMATCH,
+  });
 }
 
 function logMobileApiError(input: {
@@ -2913,6 +2965,12 @@ function mobileAuthErrorMessage(error: unknown) {
   ) {
     return "This sign-in method is not configured for this Tranqly build yet.";
   }
+  if (message.includes("GOOGLE_CLIENT_PROJECT_MISMATCH")) {
+    return "Google Sign In is connected to a different Firebase project. Please update the iOS OAuth client for Tranqly.";
+  }
+  if (message.includes("API key not valid") || message.includes("INVALID_API_KEY")) {
+    return "Tranqly's Firebase API key is not configured for this build.";
+  }
   if (message.includes("Firebase is not configured")) return "Tranqly account sign-in is not configured in this build yet.";
   if (message.includes("NETWORK")) return "Tranqly could not connect right now. Please try again in a moment.";
   return "Tranqly could not sign you in right now. Please try again in a moment.";
@@ -3119,12 +3177,26 @@ function TranqlyApp() {
   const journeyCoachTargetRef = useRef<View>(null);
   const sanctuaryCoachTargetRef = useRef<View>(null);
   const purchasesConfiguredRef = useRef(false);
+  const revenueCatIdentityUserRef = useRef<string | null>(null);
+  const authUserIdRef = useRef<string | null>(null);
+  authUserIdRef.current = authUser?.localId ?? null;
+  const [revenueCatIdentityUserId, setRevenueCatIdentityUserId] = useState<string | null>(null);
   const [purchasesReady, setPurchasesReady] = useState(false);
+  const [purchasesLoading, setPurchasesLoading] = useState(Platform.OS === "ios");
+  const [purchaseSetupError, setPurchaseSetupError] = useState(Platform.OS === "ios" ? REVENUECAT_CONFIG_ERROR : "");
   const [storePrices, setStorePrices] = useState<{ monthly: string | null; yearly: string | null }>({
     monthly: null,
     yearly: null,
   });
+  const [storeProductIds, setStoreProductIds] = useState<{ monthly: string | null; yearly: string | null }>({
+    monthly: null,
+    yearly: null,
+  });
+  const [activeSubscriptionProductId, setActiveSubscriptionProductId] = useState<string | null>(null);
   const [showPremiumModal, setShowPremiumModal] = useState(false);
+  const [showPurchaseSuccess, setShowPurchaseSuccess] = useState(false);
+  const [purchaseSuccessAddedForest, setPurchaseSuccessAddedForest] = useState(false);
+  const purchaseSuccessProgress = useRef(new Animated.Value(0)).current;
   const [selectedPlan, setSelectedPlan] = useState<"yearly" | "monthly">("yearly");
   const [showSanctuaryModal, setShowSanctuaryModal] = useState(false);
   const [showAllReflections, setShowAllReflections] = useState(false);
@@ -3139,6 +3211,8 @@ function TranqlyApp() {
   const [showNotificationPrompt, setShowNotificationPrompt] = useState(false);
   const [notificationsExpanded, setNotificationsExpanded] = useState(false);
   const [notificationDraft, setNotificationDraft] = useState<NotificationSettings>(DEFAULT_NOTIFICATION_SETTINGS);
+  const [showReminderTimePicker, setShowReminderTimePicker] = useState(false);
+  const [reminderTimeDraft, setReminderTimeDraft] = useState(() => dateFromReminderTime(DEFAULT_NOTIFICATION_SETTINGS.dailyReminderTime));
   const [storageLoaded, setStorageLoaded] = useState(false);
   const passwordRules = passwordRuleItems(authPassword);
   const passwordStrength = getPasswordStrength(authPassword);
@@ -3156,7 +3230,9 @@ function TranqlyApp() {
         try {
           const parsed: AppState = JSON.parse(raw);
           setCheckIns((parsed.checkIns || []).filter((entry) => !isDemoCheckIn(entry)));
-          setPremium(parsed.premium ?? false);
+          // RevenueCat is authoritative on iOS. Persisted premium state may
+          // belong to another Firebase account that used this device earlier.
+          setPremium(Platform.OS === "ios" ? false : parsed.premium ?? false);
           setCoachUsage(parsed.coachUsage || { dateKey: todayKey(), count: 0 });
           setMoods(parsed.moods || {});
           const storedInsight = parsed.lastDeepInsight?.isDemo ? null : parsed.lastDeepInsight || null;
@@ -3291,49 +3367,71 @@ function TranqlyApp() {
     if (!REVENUECAT_IOS_API_KEY) {
       setPremium(false);
       setPurchasesReady(false);
+      setPurchasesLoading(false);
+      setPurchaseSetupError(REVENUECAT_CONFIG_ERROR);
       return;
     }
     if (purchasesConfiguredRef.current) return;
     let cancelled = false;
     const updatePremiumAccess = (customerInfo: CustomerInfo) => {
-      if (!cancelled) {
-        setPremium(Boolean(customerInfo.entitlements.active[REVENUECAT_ENTITLEMENT_ID]));
+      if (!cancelled && revenueCatIdentityUserRef.current === authUserIdRef.current) {
+        const entitlement = customerInfo.entitlements.active[REVENUECAT_ENTITLEMENT_ID];
+        setPremium(Boolean(entitlement));
+        setActiveSubscriptionProductId(entitlement?.productIdentifier ?? customerInfo.activeSubscriptions[0] ?? null);
       }
     };
 
     async function initializePurchases() {
+      setPurchasesLoading(true);
+      setPurchaseSetupError("");
       try {
         await Purchases.setLogLevel(__DEV__ ? LOG_LEVEL.DEBUG : LOG_LEVEL.ERROR);
         const alreadyConfigured = await Purchases.isConfigured().catch(() => false);
         if (!alreadyConfigured) {
           Purchases.configure({
             apiKey: REVENUECAT_IOS_API_KEY,
+            appUserID: authUserIdRef.current ?? undefined,
           });
         }
         purchasesConfiguredRef.current = true;
         Purchases.addCustomerInfoUpdateListener(updatePremiumAccess);
-        const customerInfo = await Purchases.getCustomerInfo();
+        const expectedUserId = authUserIdRef.current;
+        const currentAppUserId = await Purchases.getAppUserID();
+        const customerInfo = expectedUserId && currentAppUserId !== expectedUserId
+          ? (await Purchases.logIn(expectedUserId)).customerInfo
+          : await Purchases.getCustomerInfo();
+        revenueCatIdentityUserRef.current = expectedUserId;
+        setRevenueCatIdentityUserId(expectedUserId);
         updatePremiumAccess(customerInfo);
         const offerings = await Purchases.getOfferings();
         const currentOffering = offerings.current;
-        if (!cancelled && currentOffering) {
-          const monthlyPackage = currentOffering.monthly ?? currentOffering.availablePackages.find((item) => item.packageType === "MONTHLY");
-          const yearlyPackage = currentOffering.annual ?? currentOffering.availablePackages.find((item) => item.packageType === "ANNUAL");
+        if (!currentOffering) {
+          throw new Error("RevenueCat has no current offering configured.");
+        }
+        if (!cancelled) {
+          const { monthlyPackage, yearlyPackage } = getValidatedStorePackages(currentOffering);
           setStorePrices({
             monthly: monthlyPackage?.product.priceString ?? null,
             yearly: yearlyPackage?.product.priceString ?? null,
+          });
+          setStoreProductIds({
+            monthly: monthlyPackage?.product.identifier ?? null,
+            yearly: yearlyPackage?.product.identifier ?? null,
           });
           setPurchasesReady(true);
         }
       } catch (error) {
         purchasesConfiguredRef.current = false;
         setPurchasesReady(false);
+        setPurchaseSetupError("Tranqly could not load App Store plans. Tap Retry App Store.");
         console.warn("RevenueCat initialization failed", error);
         logMobileApiError({
           errorCode: "revenuecat_initialization_failed",
           errorMessage: error instanceof Error ? error.message : "RevenueCat initialization failed",
           featureArea: "purchases",
         });
+      } finally {
+        if (!cancelled) setPurchasesLoading(false);
       }
     }
 
@@ -3350,15 +3448,25 @@ function TranqlyApp() {
 
     async function syncRevenueCatIdentity() {
       try {
+        revenueCatIdentityUserRef.current = null;
+        setRevenueCatIdentityUserId(null);
+        setPremium(false);
+        setActiveSubscriptionProductId(null);
         const currentAppUserId = await Purchases.getAppUserID();
         let customerInfo: CustomerInfo | null = null;
         if (authUser?.localId && currentAppUserId !== authUser.localId) {
           customerInfo = (await Purchases.logIn(authUser.localId)).customerInfo;
         } else if (!authUser?.localId && !(await Purchases.isAnonymous())) {
           customerInfo = await Purchases.logOut();
+        } else {
+          customerInfo = await Purchases.getCustomerInfo();
         }
+        revenueCatIdentityUserRef.current = authUser?.localId ?? null;
+        setRevenueCatIdentityUserId(authUser?.localId ?? null);
         if (!cancelled && customerInfo) {
-          setPremium(Boolean(customerInfo.entitlements.active[REVENUECAT_ENTITLEMENT_ID]));
+          const entitlement = customerInfo.entitlements.active[REVENUECAT_ENTITLEMENT_ID];
+          setPremium(Boolean(entitlement));
+          setActiveSubscriptionProductId(entitlement?.productIdentifier ?? customerInfo.activeSubscriptions[0] ?? null);
         }
       } catch (error) {
         console.warn("RevenueCat identity sync failed", error);
@@ -3464,6 +3572,10 @@ function TranqlyApp() {
   }
 
   function signOutMobile() {
+    revenueCatIdentityUserRef.current = null;
+    setRevenueCatIdentityUserId(null);
+    setPremium(false);
+    setActiveSubscriptionProductId(null);
     setAuthUser(null);
     setAuthPassword("");
     setAuthNotice("Signed out on this device.");
@@ -3810,7 +3922,7 @@ function TranqlyApp() {
     if (!effectivePremium && todayUsage.count >= FREE_AI_INSIGHTS_PER_DAY) {
       Alert.alert(
         "Reflection saved",
-        "Your reflection was saved. Begin Week Two when you are ready for more Tranqly insights."
+        "Your reflection was saved. Continue your journey when you are ready for more Tranqly insights."
       );
       setShowPremiumModal(true);
       return;
@@ -3876,7 +3988,8 @@ function TranqlyApp() {
           failureReason: data.failureReason,
           title: data.title,
         });
-        if (data.fallback) {
+        const serverFallback = Boolean(data.fallback || data.source === "local" || data.error === "ai_unavailable");
+        if (serverFallback) {
           logMobileApiError({
             requestId: typeof data.requestId === "string" ? data.requestId : undefined,
             errorCode: "mobile_coach_fallback",
@@ -3887,7 +4000,7 @@ function TranqlyApp() {
             route: "/api/coach",
           });
         }
-        entry.reply = data.fallback
+        entry.reply = serverFallback
           ? safeLocalCoachReply(trimmed)
           : {
               message: data.message || "",
@@ -3974,6 +4087,23 @@ function TranqlyApp() {
 
   const today = todayKey();
   const effectivePremium = hasTranqlyAccess(premium, complimentaryAccess);
+  const activePaidPlan = useMemo<"monthly" | "yearly" | "plus" | "free">(() => {
+    if (!premium) return "free";
+    if (activeSubscriptionProductId && activeSubscriptionProductId === storeProductIds.yearly) return "yearly";
+    if (activeSubscriptionProductId && activeSubscriptionProductId === storeProductIds.monthly) return "monthly";
+    if (/year|annual/i.test(activeSubscriptionProductId ?? "")) return "yearly";
+    if (/month/i.test(activeSubscriptionProductId ?? "")) return "monthly";
+    return "plus";
+  }, [activeSubscriptionProductId, premium, storeProductIds.monthly, storeProductIds.yearly]);
+  const subscriptionStatusLabel = premium
+    ? activePaidPlan === "monthly"
+      ? "Monthly"
+      : activePaidPlan === "yearly"
+        ? "Yearly"
+        : "Active"
+    : complimentaryAccess?.status === "active"
+      ? "First Week"
+      : "Free";
   const weekCheckInCount = useMemo(() => {
     const now = new Date();
     const start = new Date(now);
@@ -4244,6 +4374,9 @@ function TranqlyApp() {
     options?: { accessToken?: string; nonce?: string; fallbackEmail?: string }
   ) {
     if (!FIREBASE_API_KEY) throw new Error("Firebase is not configured for this build.");
+    if (providerId === "google.com" && GOOGLE_CLIENT_PROJECT_MISMATCH) {
+      throw new Error("GOOGLE_CLIENT_PROJECT_MISMATCH");
+    }
     const hasIdToken = Boolean(idToken);
     const hasGoogleAccessToken = providerId === "google.com" && Boolean(options?.accessToken);
     if (!hasIdToken && !hasGoogleAccessToken) throw new Error("INVALID_CREDENTIAL");
@@ -4287,6 +4420,11 @@ function TranqlyApp() {
       });
       throw new Error(errorCode);
     }
+    console.info("Firebase provider sign-in succeeded", {
+      providerId,
+      localId: Boolean(data.localId),
+      email: Boolean(data.email),
+    });
     applyFirebaseAuthResult(data, providerId, options?.fallbackEmail);
   }
 
@@ -4315,7 +4453,10 @@ function TranqlyApp() {
       if (appleName && !displayName.trim()) setDisplayName(appleName);
     } catch (error) {
       const code = (error as { code?: string })?.code;
-      if (code !== "ERR_REQUEST_CANCELED") setAuthNotice(mobileAuthErrorMessage(error));
+      if (code !== "ERR_REQUEST_CANCELED") {
+        console.warn("Apple sign-in failed", { code, message: error instanceof Error ? error.message : String(error) });
+        setAuthNotice(mobileAuthErrorMessage(error));
+      }
     } finally {
       setAuthBusy(false);
     }
@@ -4327,6 +4468,7 @@ function TranqlyApp() {
     try {
       await signInWithFirebaseProvider("google.com", idToken, { accessToken });
     } catch (error) {
+      console.warn("Google sign-in failed", { message: error instanceof Error ? error.message : String(error) });
       setAuthNotice(mobileAuthErrorMessage(error));
     } finally {
       setAuthBusy(false);
@@ -4422,7 +4564,58 @@ function TranqlyApp() {
     setCurrentOnboardingStep(next);
   }
 
-  async function startCheckout() {
+  async function refreshAppStorePlans() {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (Platform.OS !== "ios" || !REVENUECAT_IOS_API_KEY) {
+      setPurchasesReady(false);
+      setPurchaseSetupError(REVENUECAT_CONFIG_ERROR || "App Store billing is not configured in this build.");
+      Alert.alert(
+        "App Store plans unavailable",
+        REVENUECAT_CONFIG_ERROR || "App Store billing is not configured in this build."
+      );
+      return;
+    }
+    setPurchasesLoading(true);
+    setPurchaseSetupError("");
+    try {
+      await Purchases.setLogLevel(__DEV__ ? LOG_LEVEL.DEBUG : LOG_LEVEL.ERROR);
+      const alreadyConfigured = await Purchases.isConfigured().catch(() => false);
+      if (!alreadyConfigured) Purchases.configure({ apiKey: REVENUECAT_IOS_API_KEY });
+      purchasesConfiguredRef.current = true;
+      const customerInfo = await Purchases.getCustomerInfo();
+      const entitlement = customerInfo.entitlements.active[REVENUECAT_ENTITLEMENT_ID];
+      setPremium(Boolean(entitlement));
+      setActiveSubscriptionProductId(entitlement?.productIdentifier ?? customerInfo.activeSubscriptions[0] ?? null);
+      const offerings = await Purchases.getOfferings();
+      const currentOffering = offerings.current;
+      if (!currentOffering) throw new Error("RevenueCat has no current offering configured.");
+      const { monthlyPackage, yearlyPackage } = getValidatedStorePackages(currentOffering);
+      setStorePrices({
+        monthly: monthlyPackage.product.priceString,
+        yearly: yearlyPackage.product.priceString,
+      });
+      setStoreProductIds({
+        monthly: monthlyPackage.product.identifier,
+        yearly: yearlyPackage.product.identifier,
+      });
+      setPurchasesReady(true);
+    } catch (error) {
+      setPurchasesReady(false);
+      setPurchaseSetupError("Tranqly could not load App Store plans. Tap Retry App Store.");
+      console.warn("RevenueCat plan refresh failed", error);
+      logMobileApiError({
+        errorCode: "revenuecat_plan_refresh_failed",
+        errorMessage: error instanceof Error ? error.message : "RevenueCat plan refresh failed",
+        featureArea: "purchases",
+      });
+    } finally {
+      setPurchasesLoading(false);
+    }
+  }
+
+  async function startCheckout(planOverride?: "monthly" | "yearly") {
+    const checkoutPlan = planOverride ?? selectedPlan;
+    const wasPremium = premium;
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     if (Platform.OS === "ios") {
       if (!REVENUECAT_IOS_API_KEY || !purchasesConfiguredRef.current || !purchasesReady) {
@@ -4437,28 +4630,49 @@ function TranqlyApp() {
         const offerings = await Purchases.getOfferings();
         const currentOffering = offerings.current;
         if (currentOffering) {
-          const monthlyPackage = currentOffering.monthly ?? currentOffering.availablePackages.find((item) => item.packageType === "MONTHLY");
-          const yearlyPackage = currentOffering.annual ?? currentOffering.availablePackages.find((item) => item.packageType === "ANNUAL");
+          const { monthlyPackage, yearlyPackage } = getValidatedStorePackages(currentOffering);
           setStorePrices({
-            monthly: monthlyPackage?.product.priceString ?? null,
-            yearly: yearlyPackage?.product.priceString ?? null,
+            monthly: monthlyPackage.product.priceString,
+            yearly: yearlyPackage.product.priceString,
+          });
+          setStoreProductIds({
+            monthly: monthlyPackage.product.identifier,
+            yearly: yearlyPackage.product.identifier,
           });
         }
-        const planPackage = selectedPlan === "yearly"
-          ? currentOffering?.annual ?? currentOffering?.availablePackages.find((item) => item.packageType === "ANNUAL")
-          : currentOffering?.monthly ?? currentOffering?.availablePackages.find((item) => item.packageType === "MONTHLY");
+        const validatedPackages = currentOffering ? getValidatedStorePackages(currentOffering) : null;
+        const planPackage = checkoutPlan === "yearly"
+          ? validatedPackages?.yearlyPackage
+          : validatedPackages?.monthlyPackage;
         if (!planPackage) {
           Alert.alert("Checkout unavailable", "Tranqly Plus is not available in this build yet.");
           return;
         }
         const result = await Purchases.purchasePackage(planPackage);
-        const plusActive = Boolean(result.customerInfo.entitlements.active[REVENUECAT_ENTITLEMENT_ID]);
+        const activeEntitlement = result.customerInfo.entitlements.active[REVENUECAT_ENTITLEMENT_ID];
+        const plusActive = Boolean(activeEntitlement);
         if (!plusActive) {
           Alert.alert("Purchase not activated", "The App Store did not activate Tranqly Plus. Please try again.");
           return;
         }
         setPremium(true);
+        setActiveSubscriptionProductId(activeEntitlement?.productIdentifier ?? result.customerInfo.activeSubscriptions[0] ?? planPackage.product.identifier);
         setShowPremiumModal(false);
+        if (wasPremium) {
+          Alert.alert(
+            "Plan updated",
+            "The App Store confirmed your Tranqly Plus plan change. Apple will show when the new billing period begins."
+          );
+        } else {
+          const shouldEnterForest = sanctuaryTheme !== "forest";
+          if (shouldEnterForest) {
+            setSanctuaryTheme("forest");
+            setDraftSanctuaryTheme("forest");
+          }
+          setPurchaseSuccessAddedForest(shouldEnterForest);
+          setTab("coach");
+          setShowPurchaseSuccess(true);
+        }
         return;
       } catch (error) {
         const purchaseError = error as { userCancelled?: boolean; message?: string };
@@ -4483,7 +4697,7 @@ function TranqlyApp() {
       const res = await fetch(`${API_BASE_URL}/api/checkout`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan: selectedPlan }),
+        body: JSON.stringify({ plan: checkoutPlan }),
       });
       const data = await res.json();
       if (data.url) {
@@ -4507,8 +4721,10 @@ function TranqlyApp() {
     setCheckoutBusy(true);
     try {
       const customerInfo = await Purchases.restorePurchases();
-      const plusActive = Boolean(customerInfo.entitlements.active[REVENUECAT_ENTITLEMENT_ID]);
+      const activeEntitlement = customerInfo.entitlements.active[REVENUECAT_ENTITLEMENT_ID];
+      const plusActive = Boolean(activeEntitlement);
       setPremium(plusActive);
+      setActiveSubscriptionProductId(activeEntitlement?.productIdentifier ?? customerInfo.activeSubscriptions[0] ?? null);
       if (plusActive) {
         setShowPremiumModal(false);
         Alert.alert("Purchase restored", "Tranqly Plus is active again.");
@@ -4520,6 +4736,20 @@ function TranqlyApp() {
       Alert.alert("Restore unavailable", "Tranqly could not restore purchases. Please try again.");
     } finally {
       setCheckoutBusy(false);
+    }
+  }
+
+  async function manageAppStoreSubscription() {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (Platform.OS !== "ios" || !REVENUECAT_IOS_API_KEY || !purchasesConfiguredRef.current) {
+      Alert.alert("Subscription management unavailable", "Open your App Store subscriptions to manage Tranqly Plus.");
+      return;
+    }
+    try {
+      await Purchases.showManageSubscriptions();
+    } catch (error) {
+      console.warn("RevenueCat subscription management failed", error);
+      Alert.alert("Could not open subscriptions", "Open Settings, tap your Apple Account, then Subscriptions to manage Tranqly Plus.");
     }
   }
 
@@ -4569,6 +4799,20 @@ function TranqlyApp() {
   const selectedSanctuary = getSanctuaryTheme(sanctuaryTheme);
   const detailSanctuary = getSanctuaryTheme(sanctuaryDetailTheme);
   const forestHavenReward = getSanctuaryTheme("forest");
+
+  useEffect(() => {
+    if (!showPurchaseSuccess) return;
+    purchaseSuccessProgress.setValue(0);
+    const animation = Animated.timing(purchaseSuccessProgress, {
+      toValue: 1,
+      duration: 2800,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [purchaseSuccessProgress, showPurchaseSuccess]);
+
   const showFirstWeekCompleteModal = Boolean(
     onboardingCompleted &&
       !premium &&
@@ -4589,6 +4833,11 @@ function TranqlyApp() {
 
   useEffect(() => {
     if (!storageLoaded || !authUser || !FIREBASE_PROJECT_ID) return;
+    if (
+      Platform.OS === "ios" &&
+      REVENUECAT_IOS_API_KEY &&
+      revenueCatIdentityUserId !== authUser.localId
+    ) return;
     let cancelled = false;
     const timer = setTimeout(() => {
       void (async () => {
@@ -4605,8 +4854,12 @@ function TranqlyApp() {
               onboardingCoachStep,
               onboardingSkippedAt,
               onboardingCompletedAt: onboardingCoachCompletedAt,
-              subscriptionStatus: effectivePremium ? "active" : "free",
-              plan: effectivePremium ? "premium" : "free",
+              subscriptionStatus: premium
+                ? "active"
+                : hasActiveComplimentaryAccess(complimentaryAccess)
+                  ? "trial"
+                  : "free",
+              plan: premium ? "premium" : "free",
               appVersion: Constants.expoConfig?.version || "1.0.0",
               osVersion: String(Platform.Version),
               selectedTheme: sanctuaryTheme,
@@ -4640,6 +4893,8 @@ function TranqlyApp() {
     onboardingCoachStep,
     onboardingCompleted,
     onboardingSkippedAt,
+    premium,
+    revenueCatIdentityUserId,
     sanctuaryTheme,
     storageLoaded,
     streak,
@@ -6067,6 +6322,111 @@ function TranqlyApp() {
                 {authNotice ? <Text style={[styles.youCardMuted, themedMuted]}>{authNotice}</Text> : null}
               </View>
 
+              <View testID="subscription-plan-card" style={[styles.youCard, themedWeekly]}>
+                <View style={styles.authCardHeader}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.youSectionTitle, themedAccent2]}>Your Tranqly Plan</Text>
+                    <Text style={[styles.youCardBody, themedBody]}>
+                      {premium
+                        ? activePaidPlan === "monthly"
+                          ? "Your journey continues month to month. Move to yearly whenever you want a simpler annual plan."
+                          : activePaidPlan === "yearly"
+                            ? "Your yearly plan keeps thoughtful insights, weekly reflections, and every sanctuary open to you."
+                            : "Tranqly Plus is active. Your reflections can keep building into more personal insights over time."
+                        : complimentaryAccess?.status === "active"
+                          ? "Your first week includes the full Tranqly experience. Choose a plan anytime if you would like to continue after it ends."
+                          : "Reflect freely, then continue with Plus when you want unlimited insights, weekly reflections, and every sanctuary."}
+                    </Text>
+                  </View>
+                  <Text style={[styles.authStatusPill, { borderColor: appTheme.helperEdge, color: appTheme.accent }]}>
+                    {subscriptionStatusLabel}
+                  </Text>
+                </View>
+
+                {premium ? (
+                  <View style={styles.authForm}>
+                    <View style={[styles.subscriptionPlanSummary, themedInk, { borderColor: appTheme.edge }]}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.authSummaryLabel, themedAccent2]}>
+                          {activePaidPlan === "monthly" ? "Monthly plan" : activePaidPlan === "yearly" ? "Yearly plan" : "Tranqly Plus"}
+                        </Text>
+                        <Text style={[styles.subscriptionPlanPrice, themedTitle]}>
+                          {activePaidPlan === "monthly"
+                            ? storePrices.monthly ? `${storePrices.monthly} per month` : "Active through the App Store"
+                            : activePaidPlan === "yearly"
+                              ? storePrices.yearly ? `${storePrices.yearly} per year` : "Active through the App Store"
+                              : "Active through the App Store"}
+                        </Text>
+                      </View>
+                      <CompletionCheckMark color={appTheme.accent2} size={22} />
+                    </View>
+                    {activePaidPlan === "monthly" ? (
+                      <Pressable
+                        testID="settings-switch-yearly"
+                        accessibilityRole="button"
+                        onPress={() => {
+                          setSelectedPlan("yearly");
+                          setShowPremiumModal(true);
+                        }}
+                        style={[styles.authPrimaryButton, { backgroundColor: appTheme.button }]}
+                      >
+                        <Text style={[styles.authPrimaryText, themedTitle]}>Switch to Yearly</Text>
+                      </Pressable>
+                    ) : null}
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => void manageAppStoreSubscription()}
+                      style={[styles.authSecondaryButton, { borderColor: appTheme.edge }]}
+                    >
+                      <Text style={[styles.authSecondaryText, themedAccent]}>Manage Subscription</Text>
+                    </Pressable>
+                    <Text style={[styles.youCardMuted, themedMuted, { marginTop: 0 }]}>Apple confirms all plan changes before billing.</Text>
+                  </View>
+                ) : (
+                  <View style={styles.authForm}>
+                    <View style={styles.premiumPlanGrid}>
+                      <Pressable
+                        testID="settings-plan-yearly"
+                        accessibilityRole="button"
+                        onPress={() => {
+                          setSelectedPlan("yearly");
+                          setShowPremiumModal(true);
+                        }}
+                        style={[styles.premiumPlanCard, { borderColor: appTheme.accent, backgroundColor: appTheme.helperBg }]}
+                      >
+                        <View style={styles.premiumPlanHeader}>
+                          <Text style={[styles.premiumPlanName, themedTitle]}>Yearly</Text>
+                          <Text style={[styles.premiumPlanBadge, themedAccent2]}>BEST VALUE</Text>
+                        </View>
+                        <Text style={[styles.premiumPlanPrice, themedTitle]}>{storePrices.yearly ? `${storePrices.yearly} per year` : "View plan"}</Text>
+                        <Text style={[styles.premiumPlanDetail, themedMuted]}>One calm year of Tranqly Plus.</Text>
+                      </Pressable>
+                      <Pressable
+                        testID="settings-plan-monthly"
+                        accessibilityRole="button"
+                        onPress={() => {
+                          setSelectedPlan("monthly");
+                          setShowPremiumModal(true);
+                        }}
+                        style={[styles.premiumPlanCard, { borderColor: appTheme.edge }]}
+                      >
+                        <Text style={[styles.premiumPlanName, themedTitle]}>Monthly</Text>
+                        <Text style={[styles.premiumPlanPrice, themedTitle]}>{storePrices.monthly ? `${storePrices.monthly} per month` : "View plan"}</Text>
+                        <Text style={[styles.premiumPlanDetail, themedMuted]}>Continue one month at a time.</Text>
+                      </Pressable>
+                    </View>
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => void restoreAppStorePurchases()}
+                      disabled={checkoutBusy || (Platform.OS === "ios" && !purchasesReady)}
+                      style={[styles.subscriptionRestoreButton, { borderColor: appTheme.edge }]}
+                    >
+                      <Text style={[styles.authMetaText, themedMuted]}>Restore an existing purchase</Text>
+                    </Pressable>
+                  </View>
+                )}
+              </View>
+
               <View style={[styles.youCard, themedCard]}>
                 <View style={styles.authCardHeader}>
                   <View style={{ flex: 1 }}>
@@ -6095,6 +6455,7 @@ function TranqlyApp() {
                         </View>
                       </View>
                       <Pressable
+                        testID="notifications-edit"
                         onPress={() => setNotificationsExpanded(true)}
                         style={[styles.themePickerSmallButton, { borderColor: appTheme.edge }]}
                       >
@@ -6138,9 +6499,10 @@ function TranqlyApp() {
                     <View style={styles.notificationOptionsWrap}>
                       {QUIET_MINUTE_OPTIONS.map((option) => (
                         <Pressable
+                          testID={`notification-option-${option.key}`}
                           accessibilityRole="button"
-                          accessibilityLabel={recording ? "Microphone recording, double tap to stop" : "Microphone, double tap to begin recording"}
-                          accessibilityState={{ disabled: transcribing || pending }}
+                          accessibilityLabel={`${option.label} reminder time`}
+                          accessibilityState={{ selected: notificationDraft.quietMinuteOption === option.key }}
                           key={option.key}
                           style={[
                             styles.notificationOptionChip,
@@ -6155,14 +6517,18 @@ function TranqlyApp() {
                                   : appTheme.ink,
                             },
                           ]}
-                          onPress={() =>
+                          onPress={() => {
                             setNotificationDraft((current) => ({
                               ...current,
                               quietMinuteOption: option.key,
                               dailyReminderTime:
                                 option.key === "custom" ? current.dailyReminderTime : option.suggestedTime,
-                            }))
-                          }
+                            }));
+                            if (option.key === "custom") {
+                              setReminderTimeDraft(dateFromReminderTime(notificationDraft.dailyReminderTime));
+                              setShowReminderTimePicker(true);
+                            }
+                          }}
                         >
                           <Text style={[styles.notificationOptionText, notificationDraft.quietMinuteOption === option.key ? themedAccent : themedMuted]}>
                             {option.label}
@@ -6170,12 +6536,22 @@ function TranqlyApp() {
                         </Pressable>
                       ))}
                     </View>
-                    <View style={[styles.notificationRow, themedInk]}>
+                    <Pressable
+                      testID="reminder-time-row"
+                      accessibilityRole="button"
+                      accessibilityLabel={`Reminder time, ${formatHourLabel(notificationDraft.dailyReminderTime)}`}
+                      style={[styles.notificationRow, themedInk]}
+                      onPress={() => {
+                        setNotificationDraft((current) => ({ ...current, quietMinuteOption: "custom" }));
+                        setReminderTimeDraft(dateFromReminderTime(notificationDraft.dailyReminderTime));
+                        setShowReminderTimePicker(true);
+                      }}
+                    >
                       <Text style={[styles.notificationLabel, themedTitle]}>Reminder time</Text>
                       <Text style={[styles.notificationValue, themedAccent]}>
-                        {formatHourLabel(notificationDraft.dailyReminderTime)}
+                        {formatHourLabel(notificationDraft.dailyReminderTime)} ›
                       </Text>
-                    </View>
+                    </Pressable>
                     <Pressable
                       style={[styles.notificationRow, themedInk]}
                       onPress={() =>
@@ -6263,6 +6639,7 @@ function TranqlyApp() {
                         <Text style={[styles.authSecondaryText, themedAccent]}>Cancel</Text>
                       </Pressable>
                       <Pressable
+                        testID="save-notification-settings"
                         style={[styles.authPrimaryButton, { backgroundColor: appTheme.button }]}
                         onPress={() => {
                           void saveMobileNotificationSettings();
@@ -6824,6 +7201,64 @@ function TranqlyApp() {
             </Pressable>
           </Modal>
 
+          <Modal
+            visible={showReminderTimePicker}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setShowReminderTimePicker(false)}
+          >
+            <Pressable style={styles.modalOverlay} onPress={() => setShowReminderTimePicker(false)}>
+              <Pressable testID="reminder-time-picker" style={[styles.modalCard, themedCard]} onPress={() => {}}>
+                <Text style={[styles.kicker, themedAccent2]}>Daily Reminder</Text>
+                <Text style={[styles.modalMessage, themedTitle]}>Choose your quiet minute</Text>
+                <Text style={[styles.youCardMuted, themedMuted]}>
+                  Tranqly will send one gentle reminder at this time.
+                </Text>
+                {Platform.OS === "web" ? (
+                  <Text style={[styles.reminderTimePreview, themedAccent]}>{formatHourLabel(reminderTimeFromDate(reminderTimeDraft))}</Text>
+                ) : (
+                  <DateTimePicker
+                    value={reminderTimeDraft}
+                    mode="time"
+                    display={Platform.OS === "ios" ? "spinner" : "default"}
+                    minuteInterval={5}
+                    themeVariant="dark"
+                    onChange={(event: DateTimePickerEvent, selectedDate?: Date) => {
+                      if (event.type === "dismissed") {
+                        if (Platform.OS !== "ios") setShowReminderTimePicker(false);
+                        return;
+                      }
+                      if (selectedDate) setReminderTimeDraft(selectedDate);
+                    }}
+                    style={styles.reminderTimePicker}
+                  />
+                )}
+                <View style={[styles.authButtonRow, { marginTop: 18 }]}>
+                  <Pressable
+                    style={[styles.authSecondaryButton, { borderColor: appTheme.edge }]}
+                    onPress={() => setShowReminderTimePicker(false)}
+                  >
+                    <Text style={[styles.authSecondaryText, themedAccent]}>Cancel</Text>
+                  </Pressable>
+                  <Pressable
+                    testID="save-reminder-time"
+                    style={[styles.authPrimaryButton, { backgroundColor: appTheme.button }]}
+                    onPress={() => {
+                      setNotificationDraft((current) => ({
+                        ...current,
+                        quietMinuteOption: "custom",
+                        dailyReminderTime: reminderTimeFromDate(reminderTimeDraft),
+                      }));
+                      setShowReminderTimePicker(false);
+                    }}
+                  >
+                    <Text style={[styles.authPrimaryText, themedTitle]}>Save Time</Text>
+                  </Pressable>
+                </View>
+              </Pressable>
+            </Pressable>
+          </Modal>
+
           {/* Coach reply modal */}
           <Modal
             visible={coachModal !== null}
@@ -7299,7 +7734,7 @@ function TranqlyApp() {
                     style={styles.premiumUpgradeGradient}
                   >
                     <Text style={[styles.premiumUpgradeText, themedTitle]}>
-                      {checkoutBusy ? "Opening checkout..." : Platform.OS === "ios" && !purchasesReady ? "Loading App Store..." : "Continue My Journey"}
+                      {checkoutBusy ? "Opening checkout..." : Platform.OS === "ios" && !purchasesReady ? "Loading App Store..." : "Continue my Journey"}
                     </Text>
                   </LinearGradient>
                 </Pressable>
@@ -7323,6 +7758,114 @@ function TranqlyApp() {
           </Modal>
 
           <Modal
+            visible={showPurchaseSuccess}
+            animationType="fade"
+            presentationStyle="fullScreen"
+            onRequestClose={() => {}}
+          >
+            <SafeAreaView testID="purchase-success-modal" style={[styles.purchaseSuccessRoot, { backgroundColor: appTheme.bg }]}>
+              <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+                {[12, 24, 39, 58, 72, 86].map((left, index) => (
+                  <Animated.View
+                    key={left}
+                    style={[
+                      styles.purchaseSuccessParticle,
+                      {
+                        left: `${left}%`,
+                        top: `${28 + (index % 3) * 18}%`,
+                        backgroundColor: index % 2 ? appTheme.accent : appTheme.accent2,
+                        opacity: purchaseSuccessProgress.interpolate({
+                          inputRange: [0, 0.12, 0.72, 1],
+                          outputRange: [0, 0.8, 0.5, 0],
+                        }),
+                        transform: [
+                          {
+                            translateY: purchaseSuccessProgress.interpolate({
+                              inputRange: [0, 1],
+                              outputRange: [24 + index * 3, -70 - index * 9],
+                            }),
+                          },
+                          {
+                            scale: purchaseSuccessProgress.interpolate({
+                              inputRange: [0, 0.25, 1],
+                              outputRange: [0.4, 1, 0.65],
+                            }),
+                          },
+                        ],
+                      },
+                    ]}
+                  />
+                ))}
+              </View>
+              <ScrollView contentContainerStyle={styles.purchaseSuccessContent} showsVerticalScrollIndicator={false}>
+                <Animated.View
+                  style={[
+                    styles.purchaseSuccessGlow,
+                    {
+                      shadowColor: appTheme.accent,
+                      opacity: purchaseSuccessProgress.interpolate({
+                        inputRange: [0, 0.18, 1],
+                        outputRange: [0.45, 1, 0.75],
+                      }),
+                      transform: [{ scale: purchaseSuccessProgress.interpolate({ inputRange: [0, 0.25, 1], outputRange: [0.9, 1.04, 1] }) }],
+                    },
+                  ]}
+                >
+                  <Image source={TRANQLY_LOGO} style={styles.purchaseSuccessLogo} resizeMode="contain" />
+                </Animated.View>
+                <Text style={[styles.purchaseSuccessKicker, { color: appTheme.accent2 }]}>TRANQLY PLUS</Text>
+                <Text style={[styles.purchaseSuccessTitle, themedTitle]}>Welcome to Tranqly Plus</Text>
+                <Text style={[styles.purchaseSuccessBody, themedBody]}>
+                  Thank you for continuing your journey. Every reflection helps Tranqly understand you a little better. Your weekly reflections, personalized insights, and sanctuary collection will continue growing with you.
+                </Text>
+
+                <View style={[styles.purchaseSuccessList, { borderColor: appTheme.edge, backgroundColor: appTheme.card }]}>
+                  {[
+                    "Unlimited reflections",
+                    "Personalized AI insights",
+                    "Weekly reflections",
+                    "Sanctuary progression",
+                    "All future Tranqly Plus features",
+                  ].map((item) => (
+                    <View key={item} style={styles.purchaseSuccessListRow}>
+                      <CompletionCheckMark color={appTheme.accent2} size={18} />
+                      <Text style={[styles.purchaseSuccessListText, themedBody]}>{item}</Text>
+                    </View>
+                  ))}
+                </View>
+
+                {purchaseSuccessAddedForest ? (
+                  <View style={[styles.purchaseSuccessReward, { borderColor: appTheme.helperEdge, backgroundColor: appTheme.helperBg }]}>
+                    <Image source={forestHavenReward.artwork} style={styles.purchaseSuccessRewardImage} resizeMode="cover" />
+                    <View style={styles.purchaseSuccessRewardCopy}>
+                      <Text style={[styles.purchaseSuccessRewardLabel, { color: appTheme.accent2 }]}>YOUR SANCTUARY</Text>
+                      <Text style={[styles.purchaseSuccessRewardTitle, themedTitle]}>Forest Haven is ready</Text>
+                      <Text style={[styles.purchaseSuccessRewardBody, themedBody]}>It has been added to your sanctuary collection and selected for your next visit.</Text>
+                    </View>
+                  </View>
+                ) : null}
+
+                <Text style={[styles.purchaseSuccessReminder, { color: appTheme.accent2 }]}>
+                  {totalReflectionDays >= 7
+                    ? "You showed up for seven days. We are glad to keep growing with you."
+                    : "The first week was only the beginning."}
+                </Text>
+                <Pressable
+                  testID="purchase-success-continue"
+                  onPress={() => {
+                    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                    setShowPurchaseSuccess(false);
+                    setTab("coach");
+                  }}
+                  style={[styles.purchaseSuccessButton, { backgroundColor: appTheme.button }]}
+                >
+                  <Text style={[styles.purchaseSuccessButtonText, themedTitle]}>Continue My Journey</Text>
+                </Pressable>
+              </ScrollView>
+            </SafeAreaView>
+          </Modal>
+
+          <Modal
             visible={showPremiumModal}
             transparent
             animationType="slide"
@@ -7341,15 +7884,15 @@ function TranqlyApp() {
                   <ThemeIcon type="blossom" color={appTheme.accent2} size={28} />
                 </View>
                 <Text style={[styles.premiumModalTitle, themedTitle]}>
-                  Ready for another week?
+                  {premium ? "Choose your Tranqly Plus plan" : "Ready for another week?"}
                 </Text>
                 <Text style={[styles.premiumModalBody, themedBody]}>
-                  Your first week is yours to keep, whether you continue or not.
-                  {"\n\n"}
-                  Your first week helped uncover meaningful patterns. Continue whenever it feels right.
+                  {premium
+                    ? "Your monthly plan is active. You can move to yearly whenever it feels right. Apple will confirm the change before billing."
+                    : "Your first week is yours to keep, whether you continue or not.\n\nYour first week helped uncover meaningful patterns. Continue whenever it feels right."}
                 </Text>
                 {[
-                  "Another week of thoughtful responses",
+                  "More weeks of thoughtful responses",
                   "Weekly reflections that build on what you share",
                   "More sanctuaries to explore",
                   "More personal guidance over time",
@@ -7364,6 +7907,7 @@ function TranqlyApp() {
                 <View style={styles.premiumPlanGrid}>
                   <Pressable
                     onPress={() => setSelectedPlan("yearly")}
+                    accessibilityState={{ selected: selectedPlan === "yearly" }}
                     style={[
                       styles.premiumPlanCard,
                       { borderColor: selectedPlan === "yearly" ? appTheme.accent : appTheme.edge },
@@ -7375,29 +7919,42 @@ function TranqlyApp() {
                       <Text style={[styles.premiumPlanBadge, { color: appTheme.accent2 }]}>BEST VALUE</Text>
                     </View>
                     <Text style={[styles.premiumPlanPrice, themedTitle]}>
-                      {storePrices.yearly ? `${storePrices.yearly} per year` : "Loading price..."}
+                      {storePrices.yearly ? `${storePrices.yearly} per year` : purchasesLoading ? "Loading price..." : "Unavailable"}
                     </Text>
                     <Text style={[styles.premiumPlanDetail, themedMuted]}>Billed annually</Text>
                   </Pressable>
                   <Pressable
                     onPress={() => setSelectedPlan("monthly")}
+                    disabled={premium && activePaidPlan === "monthly"}
+                    accessibilityState={{ selected: selectedPlan === "monthly", disabled: premium && activePaidPlan === "monthly" }}
                     style={[
                       styles.premiumPlanCard,
                       { borderColor: selectedPlan === "monthly" ? appTheme.accent : appTheme.edge },
                       selectedPlan === "monthly" && { backgroundColor: appTheme.helperBg },
                     ]}
                   >
-                    <Text style={[styles.premiumPlanName, themedTitle]}>Monthly</Text>
+                    <View style={styles.premiumPlanHeader}>
+                      <Text style={[styles.premiumPlanName, themedTitle]}>Monthly</Text>
+                      {premium && activePaidPlan === "monthly" ? (
+                        <Text style={[styles.premiumPlanBadge, { color: appTheme.accent2 }]}>CURRENT</Text>
+                      ) : null}
+                    </View>
                     <Text style={[styles.premiumPlanPrice, themedTitle]}>
-                      {storePrices.monthly ? `${storePrices.monthly} per month` : "Loading price..."}
+                      {storePrices.monthly ? `${storePrices.monthly} per month` : purchasesLoading ? "Loading price..." : "Unavailable"}
                     </Text>
                     <Text style={[styles.premiumPlanDetail, themedMuted]}>Billed monthly</Text>
                   </Pressable>
                 </View>
+                {Platform.OS === "ios" && purchaseSetupError ? (
+                  <Text style={[styles.premiumPriceNote, themedMuted]}>{purchaseSetupError}</Text>
+                ) : null}
                 <Pressable
-                  onPress={startCheckout}
-                  disabled={checkoutBusy || (Platform.OS === "ios" && !purchasesReady)}
-                  style={[styles.premiumUpgradeButton, (checkoutBusy || (Platform.OS === "ios" && !purchasesReady)) && { opacity: 0.55 }]}
+                  onPress={() => Platform.OS === "ios" && !purchasesReady ? void refreshAppStorePlans() : void startCheckout()}
+                  disabled={checkoutBusy || (Platform.OS === "ios" && purchasesLoading) || (premium && purchasesReady && activePaidPlan === selectedPlan)}
+                  style={[
+                    styles.premiumUpgradeButton,
+                    (checkoutBusy || (Platform.OS === "ios" && purchasesLoading) || (premium && purchasesReady && activePaidPlan === selectedPlan)) && { opacity: 0.55 },
+                  ]}
                 >
                   <LinearGradient
                     colors={[appTheme.button, appTheme.button]}
@@ -7406,12 +7963,24 @@ function TranqlyApp() {
                     style={styles.premiumUpgradeGradient}
                   >
                     <Text style={[styles.premiumUpgradeText, themedTitle]}>
-                      {checkoutBusy ? "Opening checkout..." : Platform.OS === "ios" && !purchasesReady ? "Loading App Store..." : "Begin Week Two"}
+                      {checkoutBusy
+                        ? "Opening checkout..."
+                        : Platform.OS === "ios" && purchasesLoading
+                          ? "Connecting to App Store..."
+                          : Platform.OS === "ios" && !purchasesReady
+                            ? "Retry App Store"
+                          : premium && activePaidPlan === selectedPlan
+                            ? "Current Plan"
+                            : premium
+                              ? "Switch to Yearly"
+                              : "Continue my Journey"}
                     </Text>
                   </LinearGradient>
                 </Pressable>
                 <Text style={[styles.premiumPriceNote, themedMuted]}>
-                  Billing starts only after you confirm a paid plan. Your saved reflections and first weekly reflection remain available if you do not continue.
+                  {premium
+                    ? "Apple shows the effective date and billing details before confirming your plan change."
+                    : "Billing starts only after you confirm a paid plan. Your saved reflections and first weekly reflection remain available if you do not continue."}
                 </Text>
                 <Pressable
                   onPress={() => setShowPremiumModal(false)}
@@ -10928,12 +11497,158 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     paddingBottom: Platform.OS === "ios" ? 30 : 16,
   },
+  purchaseSuccessRoot: {
+    flex: 1,
+  },
+  purchaseSuccessContent: {
+    flexGrow: 1,
+    justifyContent: "center",
+    paddingHorizontal: 24,
+    paddingTop: 28,
+    paddingBottom: 34,
+  },
+  purchaseSuccessParticle: {
+    position: "absolute",
+    width: 7,
+    height: 7,
+    borderRadius: 999,
+  },
+  purchaseSuccessGlow: {
+    alignSelf: "center",
+    width: 104,
+    height: 104,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.7,
+    shadowRadius: 26,
+  },
+  purchaseSuccessLogo: {
+    width: 96,
+    height: 96,
+  },
+  purchaseSuccessKicker: {
+    marginTop: 8,
+    textAlign: "center",
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 2.1,
+  },
+  purchaseSuccessTitle: {
+    marginTop: 8,
+    textAlign: "center",
+    fontSize: 30,
+    lineHeight: 36,
+    fontWeight: "900",
+    letterSpacing: -0.7,
+  },
+  purchaseSuccessBody: {
+    alignSelf: "center",
+    maxWidth: 430,
+    marginTop: 12,
+    textAlign: "center",
+    fontSize: 15,
+    lineHeight: 22,
+  },
+  purchaseSuccessList: {
+    width: "100%",
+    maxWidth: 460,
+    alignSelf: "center",
+    marginTop: 22,
+    borderWidth: 1,
+    borderRadius: 24,
+    padding: 16,
+    gap: 11,
+  },
+  purchaseSuccessListRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  purchaseSuccessListText: {
+    flex: 1,
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: "800",
+  },
+  purchaseSuccessReward: {
+    width: "100%",
+    maxWidth: 460,
+    alignSelf: "center",
+    marginTop: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderRadius: 22,
+    padding: 10,
+    gap: 12,
+  },
+  purchaseSuccessRewardImage: {
+    width: 78,
+    height: 78,
+    borderRadius: 16,
+  },
+  purchaseSuccessRewardCopy: {
+    flex: 1,
+  },
+  purchaseSuccessRewardLabel: {
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 1.5,
+  },
+  purchaseSuccessRewardTitle: {
+    marginTop: 3,
+    fontSize: 17,
+    lineHeight: 21,
+    fontWeight: "900",
+  },
+  purchaseSuccessRewardBody: {
+    marginTop: 3,
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  purchaseSuccessReminder: {
+    alignSelf: "center",
+    maxWidth: 430,
+    marginTop: 20,
+    textAlign: "center",
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: "800",
+  },
+  purchaseSuccessButton: {
+    width: "100%",
+    maxWidth: 460,
+    minHeight: 56,
+    alignSelf: "center",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 20,
+    borderRadius: 20,
+    paddingHorizontal: 20,
+  },
+  purchaseSuccessButtonText: {
+    fontSize: 16,
+    fontWeight: "900",
+  },
   modalCard: {
     backgroundColor: "#151A24",
     borderRadius: 28,
     padding: 24,
     borderWidth: 1,
     borderColor: "#263142",
+  },
+  reminderTimePicker: {
+    width: "100%",
+    height: 180,
+    marginTop: 8,
+  },
+  reminderTimePreview: {
+    marginTop: 22,
+    marginBottom: 8,
+    fontSize: 30,
+    fontWeight: "900",
+    textAlign: "center",
   },
   premiumModalCard: {
     backgroundColor: "#151A24",
@@ -11400,6 +12115,28 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "700",
   },
+  subscriptionPlanSummary: {
+    minHeight: 76,
+    borderRadius: 18,
+    borderWidth: 1,
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  subscriptionPlanPrice: {
+    marginTop: 5,
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  subscriptionRestoreButton: {
+    minHeight: 44,
+    borderRadius: 14,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 14,
+  },
   date: {
     color: "#7E8B9D",
     fontSize: 11,
@@ -11567,3 +12304,14 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
 });
+
+function dateFromReminderTime(value: string) {
+  const [hours = "19", minutes = "30"] = value.split(":");
+  const date = new Date();
+  date.setHours(Number(hours), Number(minutes), 0, 0);
+  return date;
+}
+
+function reminderTimeFromDate(value: Date) {
+  return `${String(value.getHours()).padStart(2, "0")}:${String(value.getMinutes()).padStart(2, "0")}`;
+}

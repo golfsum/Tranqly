@@ -158,6 +158,24 @@ test("tabs, sanctuary modals, and profile state work", async ({ page }) => {
   await nameInput.fill("ND Test");
   await expect(nameInput).toHaveValue("ND Test");
 
+  await expect(page.getByTestId("subscription-plan-card")).toBeVisible();
+  await expect(page.getByText("Your Tranqly Plan", { exact: true })).toBeVisible();
+  await expect(page.getByText("First Week", { exact: true })).toBeVisible();
+  await page.getByTestId("settings-plan-yearly").click();
+  await expect(page.getByText("Ready for another week?", { exact: true })).toBeVisible();
+  await page.getByText("Not right now", { exact: true }).click();
+  await page.getByTestId("settings-plan-monthly").click();
+  await expect(page.getByText("Ready for another week?", { exact: true })).toBeVisible();
+  await page.getByText("Not right now", { exact: true }).click();
+
+  await page.getByTestId("notifications-edit").click();
+  await page.getByTestId("notification-option-custom").click();
+  await expect(page.getByTestId("reminder-time-picker")).toBeVisible();
+  await page.getByTestId("save-reminder-time").click();
+  await expect(page.getByTestId("reminder-time-picker")).toBeHidden();
+  await expect(page.getByTestId("reminder-time-row")).toBeVisible();
+  await page.getByTestId("save-notification-settings").click();
+
   await page.getByTestId("change-sanctuary").click();
   await expect(page.getByText("Choose Sanctuary", { exact: true })).toBeVisible();
   await page.getByTestId("close-theme-picker").click();
@@ -165,7 +183,7 @@ test("tabs, sanctuary modals, and profile state work", async ({ page }) => {
   await expect(nameInput).toHaveValue("ND Test");
 });
 
-test("day 7 completion appears and post-week reflection asks to begin week two", async ({ page }) => {
+test("day 7 completion appears and post-week reflection asks to continue the journey", async ({ page }) => {
   await page.evaluate((state) => {
     window.localStorage.clear();
     window.localStorage.setItem("tranqly-mobile-v1", JSON.stringify(state));
@@ -180,7 +198,7 @@ test("day 7 completion appears and post-week reflection asks to begin week two",
   await expect(page.getByText("Forest Haven, yours to keep", { exact: true })).toBeVisible();
   await expect(page.getByText("Your journey has already begun. The weeks ahead are where your insights become even more personal.", { exact: true })).toBeVisible();
   await expect(page.getByText("Yearly plan selected", { exact: true })).toBeVisible();
-  await expect(page.getByText("Continue My Journey", { exact: true })).toBeVisible();
+  await expect(page.getByText("Continue my Journey", { exact: true })).toBeVisible();
 
   await page.getByText("Maybe Later", { exact: true }).click();
   await expect(page.getByText("You've completed your first week.", { exact: true })).toHaveCount(0);
@@ -193,5 +211,5 @@ test("day 7 completion appears and post-week reflection asks to begin week two",
   await page.getByTestId("reflection-input").fill("I want to keep reflecting this week.");
   await page.getByTestId("submit-reflection").click();
   await expect(page.getByText("Ready for another week?", { exact: true })).toBeVisible();
-  await expect(page.getByText("Begin Week Two", { exact: true })).toBeVisible();
+  await expect(page.getByText("Continue my Journey", { exact: true })).toBeVisible();
 });

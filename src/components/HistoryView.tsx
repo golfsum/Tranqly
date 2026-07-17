@@ -338,7 +338,7 @@ function WeeklyReflectionSection({ premium, hasDemoData, insight, historyCount, 
       <p className="mt-2 text-xs font-bold text-dim">{weeklyDays} of 7 complete</p>
       {ready && insight ? <div className="mt-3 space-y-2"><h3 className="font-black">{insight.headline}</h3><p className="text-sm leading-relaxed text-dim">{insight.insight}</p></div> : null}
       {historyCount > 0 || insight ? <button onClick={onOpen} className="mt-3 min-h-[42px] w-full rounded-2xl border border-calm/30 bg-calm/10 text-sm font-bold text-calm">{historyCount > 1 ? "View Weekly Reflection History" : "Read Weekly Reflection"}</button> : null}
-      {ready && !insight && !premium && !hasDemoData ? <button onClick={onNeedPremium} className="mt-3 min-h-[42px] w-full rounded-2xl border border-calm/30 bg-ink text-sm font-bold text-calm">Begin Week Two</button> : null}
+      {ready && !insight && !premium && !hasDemoData ? <button onClick={onNeedPremium} className="mt-3 min-h-[42px] w-full rounded-2xl border border-calm/30 bg-ink text-sm font-bold text-calm">Continue my Journey</button> : null}
     </section>
   );
 }

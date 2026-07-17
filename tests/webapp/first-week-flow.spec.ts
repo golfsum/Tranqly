@@ -105,7 +105,7 @@ test("first week completion appears, stays readable, and week two prompt gates n
   await expect(page.getByText("Yearly plan selected", { exact: true })).toBeVisible();
   await expect(page.getByText("This Week You Gained", { exact: true })).toBeVisible();
   await expect(page.getByText("Next Week You'll Discover", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Continue My Journey" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Continue my Journey" })).toBeVisible();
 
   await page.getByRole("button", { name: "Maybe Later" }).click();
   await expect(page.getByRole("dialog", { name: "Your first week reflection" })).toHaveCount(0);
@@ -124,5 +124,5 @@ test("first week completion appears, stays readable, and week two prompt gates n
   await page.getByRole("button", { name: "Get Insights" }).click();
   await expect(page.getByRole("dialog", { name: "Tranqly Plus" })).toBeVisible();
   await expect(page.getByText("Ready for another week?", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Begin Week Two" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Continue my Journey" })).toBeVisible();
 });

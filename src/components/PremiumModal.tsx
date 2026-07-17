@@ -179,7 +179,7 @@ export default function PremiumModal({
             >
               {busy
                 ? "Opening checkout..."
-                : "Begin Week Two"}
+                : "Continue my Journey"}
             </motion.button>
             <p className="mt-2 text-center text-[11px] leading-relaxed text-faint">
               Billing starts only after you confirm a paid plan. Your saved reflections and first weekly reflection remain available if you do not continue.
