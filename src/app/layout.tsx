@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
 import ThemeApplier from "@/components/ThemeApplier";
+import { SITE_URL } from "@/lib/site";
 
 const COMING_SOON_FLAG =
   process.env.NEXT_PUBLIC_TRANQLY_COMING_SOON ??
@@ -9,7 +10,7 @@ const COMING_SOON_FLAG =
 const SHOW_COMING_SOON = COMING_SOON_FLAG === "true";
 
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || "https://tranqly.com"),
+  metadataBase: new URL(SITE_URL),
   title: "Tranqly: Daily Reflections",
   description:
     "Your AI reflection companion in your pocket. Share what you did today, get warmth, encouragement, and one gentle next step.",
