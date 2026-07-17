@@ -45,18 +45,24 @@ const plusFeatures = [
   "More personalized guidance over time",
 ] as const;
 
+const heroBenefits = [
+  { label: "1 minute a day", icon: "clock" as const },
+  { label: "Private & personal", icon: "lock" as const },
+  { label: "See your growth", icon: "bars" as const },
+] as const;
+
 function Icon({
   kind,
   className = "h-5 w-5",
 }: {
-  kind: "brain" | "sprout" | "lotus" | "lock" | "heart" | "growth";
+  kind: "brain" | "sprout" | "lotus" | "lock" | "heart" | "growth" | "clock" | "bars" | "pattern" | "sunrise" | "shield";
   className?: string;
 }) {
   if (kind === "brain") {
     return (
       <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden>
-        <path d="M9 4.5a3.5 3.5 0 0 0-3.5 3.5v.5A3 3 0 0 0 3 11.5 3 3 0 0 0 5.5 14v1A3.5 3.5 0 0 0 9 18.5h.5V4.5H9ZM15 4.5a3.5 3.5 0 0 1 3.5 3.5v.5A3 3 0 0 1 21 11.5 3 3 0 0 1 18.5 14v1a3.5 3.5 0 0 1-3.5 3.5h-.5V4.5h.5Z" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-        <path d="M9.5 8.5h5M9.5 12h5M9.5 15.5h4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        <path d="M11.7 5.3A3.25 3.25 0 0 0 5.8 7.2 3.15 3.15 0 0 0 4.1 12a3.25 3.25 0 0 0 1.55 4.85A3.25 3.25 0 0 0 11.7 18V5.3ZM12.3 5.3a3.25 3.25 0 0 1 5.9 1.9 3.15 3.15 0 0 1 1.7 4.8 3.25 3.25 0 0 1-1.55 4.85A3.25 3.25 0 0 1 12.3 18V5.3Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M8.1 6.5c1 .25 1.7 1.15 1.7 2.2M5.8 11.6c1-.45 2.2-.15 2.9.75M8 16.8c-.1-1.2.65-2.3 1.8-2.7M15.9 6.5c-1 .25-1.7 1.15-1.7 2.2M18.2 11.6c-1-.45-2.2-.15-2.9.75M16 16.8c.1-1.2-.65-2.3-1.8-2.7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
       </svg>
     );
   }
@@ -89,6 +95,43 @@ function Icon({
     return (
       <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden>
         <path d="M12 19.2 5.6 12.8a4.6 4.6 0 1 1 6.4-6.6 4.6 4.6 0 0 1 6.4 6.6L12 19.2Z" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (kind === "clock") {
+    return (
+      <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden>
+        <circle cx="12" cy="12" r="8.25" stroke="currentColor" strokeWidth="1.8" />
+        <path d="M12 7.4v5.1l3.25 1.95" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (kind === "bars") {
+    return (
+      <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden>
+        <path d="M5.25 18.5v-4.25M11.75 18.5V9.75M18.25 18.5V5.5" stroke="currentColor" strokeWidth="3.1" strokeLinecap="round" />
+      </svg>
+    );
+  }
+  if (kind === "pattern") {
+    return (
+      <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden>
+        <path d="M2.8 14.7c2.1 0 2.75-6.1 5.2-6.1 2.4 0 2.55 6.8 5.15 6.8 2.45 0 3.15-6.7 5.35-6.7 1.1 0 1.9 1.45 2.7 2.8" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (kind === "sunrise") {
+    return (
+      <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden>
+        <path d="M4 16.8h16M7.25 16.8a4.75 4.75 0 0 1 9.5 0M12 4.1v2.2M5.6 6.75l1.6 1.6M18.4 6.75l-1.6 1.6M3.25 12h2.2M18.55 12h2.2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      </svg>
+    );
+  }
+  if (kind === "shield") {
+    return (
+      <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden>
+        <path d="M12 2.8 19 5.7v5.15c0 4.55-2.85 8.15-7 10.35-4.15-2.2-7-5.8-7-10.35V5.7L12 2.8Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+        <path d="M9.7 12v-1.25a2.3 2.3 0 0 1 4.6 0V12M9.15 12h5.7v4.4h-5.7V12Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     );
   }
@@ -420,9 +463,10 @@ export default function ComingSoonLanding({ launchMode = false }: { launchMode?:
               </p>
 
               <div className="mt-6 flex flex-wrap gap-3 text-sm font-bold text-white/76">
-                {["1 minute a day", "Private & personal", "See your growth"].map((item) => (
-                  <span key={item} className="rounded-full border border-white/10 bg-white/[0.05] px-4 py-2">
-                    {item}
+                {heroBenefits.map((item) => (
+                  <span key={item.label} className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.05] px-4 py-2">
+                    <Icon kind={item.icon} className="h-[18px] w-[18px] shrink-0 text-[#b87aff]" />
+                    {item.label}
                   </span>
                 ))}
               </div>
@@ -470,13 +514,13 @@ export default function ComingSoonLanding({ launchMode = false }: { launchMode?:
               <div className="order-2 space-y-7 xl:order-1 xl:pt-24">
                 {[
                   { title: "AI that remembers", body: "Personalized insights from your journey.", icon: "brain" as const },
-                  { title: "Patterns that guide", body: "Spot what is helping you grow and what is not.", icon: "growth" as const },
-                  { title: "Daily reflection", body: "Short check-ins that create real change.", icon: "lotus" as const },
-                  { title: "Your privacy", body: "Your reflections stay private and secure on your device.", icon: "lock" as const },
+                  { title: "Patterns that guide", body: "Spot what is helping you grow and what is not.", icon: "pattern" as const },
+                  { title: "Daily reflection", body: "Short check-ins that create real change.", icon: "sunrise" as const },
+                  { title: "Your privacy", body: "Your reflections stay private and secure on your device.", icon: "shield" as const },
                 ].map((item) => (
                   <div key={item.title} className="flex items-start gap-4">
                     <div className="grid h-16 w-16 shrink-0 place-items-center rounded-full border border-[#63428d] bg-[#161121]/88 text-[#cf9cff]">
-                      <Icon kind={item.icon} className="h-6 w-6" />
+                      <Icon kind={item.icon} className="h-8 w-8" />
                     </div>
                     <div>
                       <p className="text-[1.05rem] font-semibold text-[#d7a7ff]">{item.title}</p>

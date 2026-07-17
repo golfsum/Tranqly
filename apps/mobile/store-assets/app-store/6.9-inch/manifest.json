@@ -3,32 +3,37 @@
     "width": 1290,
     "height": 2796
   },
-  "generatedAt": "2026-07-14T03:55:30.495Z",
+  "generatedAt": "2026-07-17T17:09:04.132Z",
   "screenshots": [
     {
-      "output": "01-notice-what-matters.png",
-      "source": "02-personal-insight-current.png",
-      "title": "Notice What Matters"
+      "output": "01-understand-yourself-every-day.png",
+      "source": "02-insights-result-current.png",
+      "title": "Understand yourself a little better every day"
     },
     {
-      "output": "02-reflect-in-one-minute.png",
+      "output": "02-reflect-in-under-60-seconds.png",
       "source": "01-insights-current.png",
-      "title": "Reflect In One Minute"
+      "title": "Reflect in under 60 seconds"
     },
     {
-      "output": "03-see-your-progress.png",
-      "source": "03-first-week-current.png",
-      "title": "See Your Progress"
+      "output": "03-discover-weekly-patterns.png",
+      "source": "04-weekly-reflection-current.png",
+      "title": "Discover patterns across your week"
     },
     {
-      "output": "04-choose-your-sanctuary.png",
-      "source": "06-themes-current.png",
-      "title": "Choose Your Sanctuary"
+      "output": "04-ai-that-remembers.png",
+      "source": "03-personal-insight-current.png",
+      "title": "AI that remembers what matters"
     },
     {
-      "output": "05-keep-reflections-private.png",
-      "source": "07-privacy-current.png",
-      "title": "Keep Reflections Private"
+      "output": "05-build-your-sanctuary.png",
+      "source": "08-themes-current.png",
+      "title": "Build a sanctuary you'll want to return to"
+    },
+    {
+      "output": "06-unlock-deeper-insights.png",
+      "source": "07-journey-weekly-current.png",
+      "title": "Unlock deeper insights every week"
     }
   ]
 }

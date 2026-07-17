@@ -207,38 +207,38 @@ try {
   await capture(page, "01-insights-current.png");
 
   await seed(page, richState({ includeToday: true }));
+  await page.getByText("Today's Insight", { exact: true }).waitFor();
+  await page.waitForTimeout(500);
+  await capture(page, "02-insights-result-current.png");
+
   await page.getByText("See more", { exact: true }).click();
   await page.getByText("One Gentle Step", { exact: true }).waitFor();
   await page.waitForTimeout(700);
-  await capture(page, "02-personal-insight-current.png");
+  await capture(page, "03-personal-insight-current.png");
 
-  await seed(page, richState({ includeToday: true, expired: true }));
-  await page.getByText("Your first week is complete.", { exact: true }).waitFor();
+  await seed(page, richState({ includeToday: true }));
+  await page.getByText("Read Weekly Reflection", { exact: true }).click();
+  await page.getByText("Weekly Reflection History", { exact: true }).waitFor();
+  await page.getByTestId("weekly-reflection-modal-scroll").waitFor();
   await page.waitForTimeout(700);
-  await capture(page, "03-first-week-current.png");
+  await capture(page, "04-weekly-reflection-current.png");
 
   await seed(page, richState({ includeToday: true }));
   await page.getByRole("tab", { name: "Journey" }).click();
   await page.getByText("Your journey", { exact: true }).waitFor();
-  await capture(page, "04-journey-current.png");
+  await capture(page, "06-journey-current.png");
 
-  await page.getByTestId("journey-explore-sanctuary").click();
-  await page.getByText("Current Sanctuary", { exact: true }).waitFor();
-  await page.waitForTimeout(700);
-  await capture(page, "05-sanctuary-current.png");
+  await page.getByText("Weekly Reflection", { exact: true }).last().evaluate((element) => {
+    element.scrollIntoView({ block: "start", behavior: "instant" });
+  });
+  await page.waitForTimeout(500);
+  await capture(page, "07-journey-weekly-current.png");
 
-  await page.getByTestId("close-sanctuary").click();
   await page.getByRole("tab", { name: "You" }).click();
   await page.getByTestId("change-sanctuary").click();
   await page.getByText("Choose Sanctuary", { exact: true }).waitFor();
   await page.waitForTimeout(700);
-  await capture(page, "06-themes-current.png");
-
-  await page.getByTestId("close-theme-picker").click();
-  const privacySection = page.getByText("Privacy", { exact: true });
-  await privacySection.scrollIntoViewIfNeeded();
-  await page.waitForTimeout(500);
-  await capture(page, "07-privacy-current.png");
+  await capture(page, "08-themes-current.png");
 
   await context.close();
   console.log(`Captured current Tranqly screens in ${outputDir}`);

@@ -10,59 +10,70 @@ const logoPath = path.join(root, "apps", "mobile", "assets", "images", "tranqly_
 
 const shots = [
   {
-    output: "01-notice-what-matters.png",
-    source: "02-personal-insight-current.png",
-    title: "Notice What Matters",
+    output: "01-understand-yourself-every-day.png",
+    source: "02-insights-result-current.png",
+    title: "Understand yourself a little better every day",
     background: ["#f0e8ff", "#cdb9ff"],
     ink: "#241735",
     accent: "#7142c8",
-    zoom: 1.12,
-    focusY: 55,
+    zoom: 1.04,
+    focusY: 32,
     shiftY: 0,
   },
   {
-    output: "02-reflect-in-one-minute.png",
+    output: "02-reflect-in-under-60-seconds.png",
     source: "01-insights-current.png",
-    title: "Reflect In One Minute",
+    title: "Reflect in under 60 seconds",
     background: ["#ffeaf4", "#e8b7d4"],
     ink: "#331a2c",
     accent: "#a13e7c",
-    zoom: 1.08,
-    focusY: 30,
+    zoom: 1.03,
+    focusY: 34,
     shiftY: 0,
   },
   {
-    output: "03-see-your-progress.png",
-    source: "03-first-week-current.png",
-    title: "See Your Progress",
+    output: "03-discover-weekly-patterns.png",
+    source: "04-weekly-reflection-current.png",
+    title: "Discover patterns across your week",
     background: ["#e1f8f2", "#a7ddd3"],
     ink: "#17352f",
     accent: "#247e70",
-    zoom: 1.04,
-    focusY: 26,
+    zoom: 1.08,
+    focusY: 46,
     shiftY: 0,
   },
   {
-    output: "04-choose-your-sanctuary.png",
-    source: "06-themes-current.png",
-    title: "Choose Your Sanctuary",
-    background: ["#fff0dd", "#f0bd91"],
-    ink: "#3a251b",
-    accent: "#b35f35",
-    zoom: 1.11,
+    output: "04-ai-that-remembers.png",
+    source: "03-personal-insight-current.png",
+    title: "AI that remembers what matters",
+    background: ["#eee7ff", "#bda9f2"],
+    ink: "#21152f",
+    accent: "#7650c8",
+    zoom: 1.08,
     focusY: 48,
     shiftY: 0,
   },
   {
-    output: "05-keep-reflections-private.png",
-    source: "07-privacy-current.png",
-    title: "Keep Reflections Private",
+    output: "05-build-your-sanctuary.png",
+    source: "08-themes-current.png",
+    title: "Build a sanctuary you'll want to return to",
+    background: ["#fff0dd", "#f0bd91"],
+    ink: "#3a251b",
+    accent: "#b35f35",
+    zoom: 1.04,
+    focusY: 42,
+    shiftY: 0,
+  },
+  {
+    output: "06-unlock-deeper-insights.png",
+    source: "07-journey-weekly-current.png",
+    title: "Unlock deeper insights every week",
     background: ["#e8f1ff", "#b5c9ee"],
     ink: "#17243a",
     accent: "#486b9f",
-    zoom: 1,
-    focusY: 100,
-    shiftY: 0,
+    zoom: 1.02,
+    focusY: 35,
+    shiftY: 72,
   },
 ];
 
@@ -130,7 +141,7 @@ function pageHtml({ shot, screenUri, logoUri }) {
       align-self: flex-start;
       gap: 18px;
       color: ${shot.ink};
-      font-size: 35px;
+      font-size: 34px;
       font-weight: 800;
       letter-spacing: -.5px;
     }
@@ -142,16 +153,16 @@ function pageHtml({ shot, screenUri, logoUri }) {
     }
     .copy {
       width: 100%;
-      margin-top: 68px;
+      margin-top: 54px;
       text-align: center;
     }
     h1 {
-      max-width: 1080px;
+      max-width: 1120px;
       margin: 0 auto;
       color: ${shot.ink};
-      font-size: 118px;
-      line-height: .98;
-      letter-spacing: -6.2px;
+      font-size: 100px;
+      line-height: 1.01;
+      letter-spacing: -4.8px;
       font-weight: 900;
       text-wrap: balance;
       text-shadow: 0 4px 18px rgba(255,255,255,.18);
@@ -160,19 +171,19 @@ function pageHtml({ shot, screenUri, logoUri }) {
       position: absolute;
       left: 50%;
       bottom: -40px;
-      width: 962px;
+      width: 1010px;
       padding: 17px;
-      border-radius: 110px 110px 0 0;
+      border-radius: 116px 116px 0 0;
       transform: translateX(-50%);
       background: linear-gradient(145deg, #403d4a 0%, #0b0a10 17%, #000 78%, #26232d 100%);
       box-shadow: 0 42px 130px rgba(0,0,0,.66), 0 0 90px ${shot.accent}2a;
     }
     .screen {
       position: relative;
-      width: 928px;
-      height: 2018px;
+      width: 976px;
+      height: 2050px;
       overflow: hidden;
-      border-radius: 92px 92px 0 0;
+      border-radius: 98px 98px 0 0;
       background: #05040a;
       border: 2px solid rgba(255,255,255,.13);
     }
@@ -245,7 +256,7 @@ function pageHtml({ shot, screenUri, logoUri }) {
     <div class="shade"></div>
     <div class="orb"></div>
     <div class="content">
-      <div class="brand"><img src="${logoUri}" alt="" /><span>Tranqly</span></div>
+      <div class="brand"><img src="${logoUri}" alt="" /><span>Tranqly: Daily Reflections</span></div>
       <section class="copy">
         <h1>${escapeHtml(shot.title)}</h1>
       </section>
