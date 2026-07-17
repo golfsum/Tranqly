@@ -31,6 +31,7 @@ const REPLY_SCHEMA = {
     emotional_truth: { type: "string", description: "Private planning note: the grounded emotional meaning beneath the event." },
     mixed_emotions: { type: "string", description: "Private planning note: two emotions or tensions present at once, or empty string." },
     deeper_pressure: { type: "string", description: "Private planning note: the adjustment, need, effort, or uncertainty the user is carrying." },
+    emotional_transition: { type: "string", description: "Private planning note: what changed emotionally from before this moment to now, while naming what remains unresolved." },
     why_this_matters: { type: "string", description: "Private planning note: why this moment matters emotionally beyond the event itself." },
     fresh_perspective: { type: "string", description: "Private planning note: one grounded observation the user may not have consciously noticed." },
     memorable_insight: { type: "string", description: "Private planning note: one specific, grounded sentence worth remembering that adds meaning rather than summary." },
@@ -66,6 +67,7 @@ const REPLY_SCHEMA = {
     "emotional_truth",
     "mixed_emotions",
     "deeper_pressure",
+    "emotional_transition",
     "why_this_matters",
     "fresh_perspective",
     "memorable_insight",
@@ -94,6 +96,7 @@ interface GeneratedCoachReply {
   emotional_truth?: string;
   mixed_emotions?: string;
   deeper_pressure?: string;
+  emotional_transition?: string;
   why_this_matters?: string;
   fresh_perspective?: string;
   memorable_insight?: string;
@@ -188,23 +191,24 @@ const CLASSIFIER_PROMPT =
 const SYSTEM_PROMPT =
   "You are Tranqly, a thoughtful daily reflection companion. Your job is not to summarize the user's entry. " +
   "Notice the emotional meaning underneath it and offer one grounded perspective that helps the user feel genuinely understood. " +
-  "Before writing the visible response, fill the private planning fields. Identify the emotional truth, any mixed emotions, the deeper pressure or adjustment, and the best response type. Use advice_check to confirm the nudge does not suggest something the user already said they are doing. " +
+  "Before writing the visible response, fill the private planning fields. Identify the emotional truth, any mixed emotions, the deeper pressure or adjustment, the emotional transition from before this moment to now, and the best response type. Use advice_check to confirm the nudge does not suggest something the user already said they are doing. " +
   "Do not stop after identifying what happened. Ask so what? Determine why the moment matters, what changed, what stayed unresolved, and what it may reveal about how the user is moving through the situation. Put that answer in why_this_matters. " +
+  "Treat the emotional transition as more important than a list of events. Ask what became lighter, heavier, clearer, possible, or newly uncertain. Put that before-and-now shift in emotional_transition. If no real shift is supported, describe the tension the user is holding instead of inventing one. " +
   "Then ask whether the user would learn anything new about their experience by reading the response. Put one grounded, non-obvious observation in fresh_perspective. If it only paraphrases the entry, rethink it before writing the visible response. " +
   "Silently ask what a thoughtful friend would notice that the user did not explicitly say. Put the strongest answer in memorable_insight as one complete sentence of 12 to 24 words. It must connect a concrete detail to its emotional meaning, name a supported shift or tension, recognize mixed emotions, reveal overlooked progress, or offer a grounded perspective. It must not merely restate an event. " +
-  "Use one or two concrete details from the current reflection. Then identify a deeper meaning without repeating the entry. Notice mixed experiences such as relief without security, progress without certainty, gratitude with exhaustion, hope with hesitation, or care with frustration when supported. " +
+  "Use one or two concrete details from the current reflection. Rank details by meaning, not by how many were mentioned. Center the detail that creates the clearest emotional shift. Mention a secondary fact only when it helps explain that shift. Never walk back through every topic in the entry. Then identify a deeper meaning without repeating the entry. Notice mixed experiences such as relief without security, progress without certainty, gratitude with exhaustion, hope with hesitation, or care with frustration when supported. " +
   "Do not diagnose, exaggerate, moralize, blame anyone, or invent emotions or motives. Use tentative language when interpreting meaning. " +
   "Do not say something keeps the user on edge, makes them afraid, or reveals a hidden fear unless they explicitly described that feeling. " +
   "The visible response must add a fresh perspective. The nudge may be permission, reassurance, a perspective shift, a reflective question, a practical next step, or simple recognition. Do not force a task. " +
-  "The visible response must naturally include the meaning of emotional_truth, why_this_matters, fresh_perspective, memorable_insight, and, when present, the mixed_emotions. The memorable insight should be the sentence most worth saving or revisiting. Do not leave the interpretation only in the private planning fields. " +
+  "The visible response must naturally include the meaning of emotional_truth, emotional_transition, why_this_matters, fresh_perspective, memorable_insight, and, when present, the mixed_emotions. The memorable insight should be the sentence most worth saving or revisiting. Do not leave the interpretation only in the private planning fields. " +
   "Before suggesting an action, check for actions already underway. If the user says they are working on, trying, discussing, adjusting, or figuring something out, recognize that effort instead of suggesting the same action. " +
   "Mention a longer-term pattern only when at least two earlier relevant reflections support it. Otherwise return an empty pattern. " +
   "Title must be 3 to 7 natural words, at most 55 characters, with no ending period. Make it an emotionally meaningful observation, not a topic label or factual recap. " +
   "Preview must be at most 125 characters, complete its thought, and add a new layer of meaning. Never repeat or lightly rephrase the title. " +
-  "What stood out must be 2 to 4 concise sentences. Its first sentence should identify the emotional truth. The next sentence should connect it to a deeper effort, need, tension, or adjustment. Reference one or two concrete details without claiming certainty. " +
+  "What stood out must be 2 to 4 concise sentences. Use at most one sentence to anchor what happened. Then name the emotional transition and add one perspective the user did not explicitly state. Reference one or two concrete details without claiming certainty. Do not spend separate sentences recapping separate facts. " +
   "Keep each visible sentence under 28 words. Do not use a long compound sentence to explain the whole reflection. Avoid academic transitions such as which suggests that, indicating that, or the connection between. " +
   "Gentle nudge must be optional and directly relevant. Choose a nudge label that accurately describes its content. Reassurance or recognition is often better than advice. " +
-  "Before returning, run four checks. If the response would still fit without this reflection, rewrite it. If it adds nothing the user did not already say, rewrite it. If it has no memorable sentence, rewrite it. If it could apply to thousands of users, make the interpretation more specific without inventing facts. " +
+  "Before returning, run five checks. If the response would still fit without this reflection, rewrite it. If it adds nothing the user did not already say, rewrite it. If it treats every fact as equally important, rewrite it around the clearest emotional transition. If it has no memorable sentence, rewrite it. If it could apply to thousands of users, make the interpretation more specific without inventing facts. " +
   "Always speak directly to the user as you. Never describe the user in third person or use their name inside the reflection response. " +
   "Suggestions must be manageable and phrased with may, might, could, or if it helps. Never tell the user what they must do. " +
   "Avoid blaming labels such as failed, mistake, unhealthy, poor choice, not enough, broken, or you need to. " +
@@ -214,7 +218,7 @@ const SYSTEM_PROMPT =
   "Do not suggest anxiety, depression, trauma, burnout, or any condition unless the user explicitly says it. If the user mentions self-harm, harm to others, abuse, or immediate danger, respond supportively and encourage emergency services or a trusted person. " +
   "When memory notes are provided, use them only when they create a clear and useful connection. Never turn a few reflections into a permanent personality claim. Never recite notes verbatim. " +
   "Only set should_save_memory to true for a durable, useful fact. Do not save one-off events, sensitive details, general trivia, or temporary moods. " +
-  "Style calibration: if help arrives but uncertainty remains, name the breathing room without pretending the larger pressure is gone. If a relationship routine is already being adjusted, recognize that shared adjustment instead of assigning another scheduling task.";
+  "Style calibration: if help arrives but uncertainty remains, center the movement from waiting toward breathing room without pretending the larger pressure is gone. If a relationship routine is already being adjusted, do not recap the schedule change unless it deepens the main observation. Recognize the effort without assigning another scheduling task. Reassurance should feel earned by the specific shift, not pasted onto the end.";
 
 const INSIGHT_LIMITS = { title: 55, preview: 125, whatStoodOut: 420, gentleNudge: 260, pattern: 300 } as const;
 
@@ -358,7 +362,7 @@ function responseQualityIssues(entry: string, reply: GeneratedCoachReply, name?:
   if (overlapRatio(entry, `${stoodOut} ${nudge}`) > 0.58) issues.push("too much of the response paraphrases the entry");
 
   const memorableInsight = cleanText(reply.memorable_insight);
-  const planningWords = new Set(meaningfulWords(`${cleanText(reply.emotional_truth)} ${cleanText(reply.mixed_emotions)} ${cleanText(reply.deeper_pressure)} ${cleanText(reply.why_this_matters)} ${cleanText(reply.fresh_perspective)} ${memorableInsight}`));
+  const planningWords = new Set(meaningfulWords(`${cleanText(reply.emotional_truth)} ${cleanText(reply.mixed_emotions)} ${cleanText(reply.deeper_pressure)} ${cleanText(reply.emotional_transition)} ${cleanText(reply.why_this_matters)} ${cleanText(reply.fresh_perspective)} ${memorableInsight}`));
   const visibleWords = new Set(meaningfulWords(`${stoodOut} ${nudge}`));
   const visiblePlanningMatches = [...planningWords].filter((word) => visibleWords.has(word)).length;
   if (planningWords.size && visiblePlanningMatches < 2) issues.push("visible response does not express the planned emotional meaning");
@@ -388,6 +392,7 @@ function responseQualityIssues(entry: string, reply: GeneratedCoachReply, name?:
   }
 
   if (!cleanText(reply.emotional_truth)) issues.push("emotional truth was not identified");
+  if (!cleanText(reply.emotional_transition)) issues.push("the response did not identify what changed emotionally or what tension remained");
   if (!cleanText(reply.why_this_matters)) issues.push("why this matters was not identified");
   if (!cleanText(reply.fresh_perspective)) issues.push("no fresh perspective was identified");
   if (!cleanText(reply.advice_check)) issues.push("advice was not checked against the reflection");
@@ -405,6 +410,7 @@ function groundedFallbackReply(entry: string): GeneratedCoachReply | null {
       emotional_truth: "Rest changed how available the day felt, not only how much energy the user had.",
       mixed_emotions: "The day stayed busy, but it no longer felt as draining.",
       deeper_pressure: "Several restless nights had made ordinary work require more effort.",
+      emotional_transition: "Real rest created more room for the same busy morning.",
       why_this_matters: "The same workload can feel different when the user is not spending the morning fighting exhaustion.",
       fresh_perspective: "Rest gave the user more room to meet the day rather than merely endure it.",
       memorable_insight: "Rest gave you enough room to meet a busy morning without feeling consumed by it.",
@@ -434,6 +440,7 @@ function groundedFallbackReply(entry: string): GeneratedCoachReply | null {
       emotional_truth: "The difficult part of the day did not disappear, but it did not get the final word.",
       mixed_emotions: "The day held both pressure and a noticeable release from it.",
       deeper_pressure: "Work tension was following the user toward the end of the day.",
+      emotional_transition: "The pressure remained, but the user stopped carrying it forward unchanged.",
       why_this_matters: "A brief change of place created a boundary between the pressure and what came next.",
       fresh_perspective: "The walk mattered less as an escape and more as a way to stop carrying work forward unchanged.",
       memorable_insight: "The heavy part of the day did not disappear, but it did not get the final word.",
@@ -476,20 +483,21 @@ function groundedFallbackReply(entry: string): GeneratedCoachReply | null {
     emotional_truth: "Relief can be real without creating security yet.",
     mixed_emotions: "Relief and uncertainty are present together.",
     deeper_pressure: "Financial uncertainty and a shared routine change are both taking time to settle.",
-    why_this_matters: "One burden becoming lighter can create breathing room even when the larger season is unresolved.",
-    fresh_perspective: "The user is allowing relief to be real without pretending everything is fixed.",
-    memorable_insight: "The relief can be real without feeling complete.",
+    emotional_transition: "The user moved from waiting without an answer to having one source of pressure begin to lift.",
+    why_this_matters: "One burden becoming lighter can give the mind more room even when the larger season remains unresolved.",
+    fresh_perspective: "One part of life settling can be meaningful progress without requiring the rest to feel solved.",
+    memorable_insight: "One weight starting to lift can give your mind more room before the rest of life catches up.",
     response_type: "reassurance",
-    advice_check: "The user is already working on the schedule adjustment, so no scheduling task is suggested.",
-    title: "A Little Room to Breathe",
-    preview: "One pressure eased, even while the larger uncertainty remains.",
+    advice_check: `${scheduleMeaning} The schedule adjustment is already underway, so no scheduling task is suggested.`,
+    title: "One Weight Started to Lift",
+    preview: "One part of life settling may have given your mind more room for everything else.",
     what_stood_out:
-      `The payment did not erase the uncertainty, but it gave you a little breathing room after waiting without knowing when help would come. ${scheduleMeaning} The relief can be real without feeling complete.`,
+      "Receiving the payment did not make everything secure, but it changed the shape of the uncertainty. You had been carrying both the wait for help and changes at home. Now one of those weights has started to lift, and your mind may finally have a little more room than it did before.",
     gentle_nudge:
-      "You do not have to turn this relief into a solution for everything else. It may be enough to let one pressure feel lighter while the rest takes time to settle.",
+      "You do not have to make everything feel solved before you let yourself notice the relief. One thing becoming easier is still progress while the rest catches up.",
     nudge_label: "A Little Reassurance",
     pattern: "",
-    summary: "One source of pressure eased while the rest is still taking time to settle.",
+    summary: "One weight starting to lift created more room, even though life is still adjusting.",
     themes: ["finances", "adjustment", "relationship"],
     tags: ["work", "relationships"],
     emotional_tone: "relieved and uncertain",
@@ -689,7 +697,7 @@ export async function POST(req: NextRequest) {
             {
               role: "system",
               content:
-                "You are the final editor for a private reflection companion. Rewrite only the user-visible response fields. Add one grounded insight the user did not explicitly state, without inventing facts. Connect ideas instead of summarizing them separately. Use plain, warm language, no em dashes, no diagnosis, no generic wellness phrases, and no forced advice. Return only the requested JSON.",
+                "You are the final editor for a private reflection companion. Rewrite only the user-visible response fields. Center the clearest emotional transition instead of giving every fact equal weight. Add one grounded insight the user did not explicitly state, without inventing facts. Connect ideas instead of summarizing them separately. Use plain, warm language, no em dashes, no diagnosis, no generic wellness phrases, and no forced advice. Return only the requested JSON.",
             },
             {
               role: "user",
@@ -698,8 +706,8 @@ export async function POST(req: NextRequest) {
                 `Relevant earlier reflections: ${context || "None"}\n` +
                 `Draft: ${JSON.stringify(parsed)}\n\n` +
                 `The draft failed quality review: ${qualityIssues.join("; ")}. ` +
-                "Rewrite it from a deeper interpretation rather than a summary. Ask so what, state why the moment matters, and include one grounded, memorable sentence of 12 to 24 words that the user may not have consciously noticed. Make that sentence visible in what_stood_out, connect the reflection's ideas rather than listing them, keep one or two concrete details, and do not suggest an action already underway. Use 2 to 4 short sentences under 28 words each. Remove stock wellness language and academic phrases such as which suggests that, small victories, what works for you, or more manageable. " +
-                "The gentle section may simply offer permission or reassurance. Return complete valid JSON.",
+                "Rewrite it from a deeper interpretation rather than a summary. Ask so what, identify what changed emotionally from before this moment to now, and state why that shift matters. Include one grounded, memorable sentence of 12 to 24 words that the user may not have consciously noticed. Make that sentence visible in what_stood_out. Use at most one sentence to anchor what happened, then interpret the shift. Connect the reflection's ideas rather than listing them, keep one or two concrete details, and do not suggest an action already underway. Use 2 to 4 short sentences under 28 words each. Remove stock wellness language and academic phrases such as which suggests that, small victories, what works for you, or more manageable. " +
+                "The gentle section may offer permission or reassurance, but it must be earned by the specific situation rather than generic comfort. Return complete valid JSON.",
             },
           ],
         });

@@ -958,15 +958,15 @@ function localCoachReply(text: string): CoachReply {
   if (financialUncertainty && scheduleAdjustment) {
     return {
       message:
-        "The payment did not erase the uncertainty, but it gave you a little breathing room after waiting without knowing when help would come. At the same time, home may still feel unsettled while you and your fiancé find a different rhythm. The relief can be real without feeling complete.",
-      title: "A Little Room to Breathe",
+        "Receiving the payment did not make everything secure, but it changed the shape of the uncertainty. You had been carrying both the wait for help and changes at home. Now one of those weights has started to lift, and your mind may finally have a little more room than it did before.",
+      title: "One Weight Started to Lift",
       pattern: "Financial pressure and changes at home may be shaping how settled each day feels.",
-      summary: "One source of pressure eased while the rest is still taking time to settle.",
+      summary: "One weight starting to lift created more room, even though life is still adjusting.",
       themes: ["finances", "adjustment", "relationship"],
       tags: ["work", "relationships"],
       emotionalTone: "relieved and uncertain",
       followUpQuestions: ["What feels a little lighter now that the payment arrived?"],
-      nextStep: "You do not have to turn this relief into a solution for everything else. It may be enough to let one pressure feel lighter while the rest takes time to settle.",
+      nextStep: "You do not have to make everything feel solved before you let yourself notice the relief. One thing becoming easier is still progress while the rest catches up.",
       nudgeLabel: "A Little Reassurance",
       source: "local",
       createdAt: new Date().toISOString(),
