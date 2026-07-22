@@ -1,5 +1,5 @@
-import { addDoc, collection, serverTimestamp } from "firebase/firestore";
-import { getFirebase } from "./firebase";
+import { FieldValue } from "firebase-admin/firestore";
+import { getFirebaseAdmin } from "./firebaseAdmin";
 
 export interface AdminErrorLogInput {
   requestId?: string;
@@ -17,10 +17,8 @@ export interface AdminErrorLogInput {
 
 export async function logAdminError(input: AdminErrorLogInput) {
   try {
-    const fb = getFirebase();
-    if (!fb) return;
-
-    await addDoc(collection(fb.db, "adminErrors"), {
+    const admin = getFirebaseAdmin();
+    await admin.db.collection("adminErrors").add({
       requestId: input.requestId ?? null,
       errorCode: input.errorCode.slice(0, 120),
       errorMessage: input.errorMessage.slice(0, 1000),
@@ -32,7 +30,7 @@ export async function logAdminError(input: AdminErrorLogInput) {
       route: input.route ?? null,
       model: input.model ?? null,
       metadata: input.metadata ?? null,
-      createdAt: serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     });
   } catch (err) {
     console.warn("Failed to write admin error log", err);

@@ -23,6 +23,8 @@ interface MobileProfileInput {
   onboardingCoachStep: "mic" | "journey" | "sanctuary" | null;
   onboardingSkippedAt: string | null;
   onboardingCompletedAt: string | null;
+  authProvider: "apple.com" | "google.com" | "password";
+  lastLoginAt: string;
   subscriptionStatus: "active" | "trial" | "free";
   plan: "premium" | "free";
   appVersion: string;
@@ -54,7 +56,12 @@ function encodeValue(value: FirestorePrimitive) {
 
 function encodeFields(values: Record<string, FirestorePrimitive>) {
   return Object.fromEntries(
-    Object.entries(values).map(([key, value]) => [key, encodeValue(value)])
+    Object.entries(values).map(([key, value]) => {
+      if (typeof value === "string" && key.endsWith("At") && !Number.isNaN(Date.parse(value))) {
+        return [key, { timestampValue: new Date(value).toISOString() }];
+      }
+      return [key, encodeValue(value)];
+    })
   );
 }
 
@@ -94,8 +101,8 @@ export async function syncMobileUserProfile(
     onboardingCoachStep: profile.onboardingCoachStep,
     onboardingSkippedAt: profile.onboardingSkippedAt,
     onboardingCompletedAt: profile.onboardingCompletedAt,
-    authProvider: "password",
-    lastLoginAt: now,
+    authProvider: profile.authProvider,
+    lastLoginAt: profile.lastLoginAt,
     lastActiveAt: now,
     subscriptionStatus: profile.subscriptionStatus,
     plan: profile.plan,

@@ -42,6 +42,14 @@ service cloud.firestore {
         allow create: if isOwner(uid);
         allow update: if isAdmin();
       }
+
+      match /notificationSettings/{docId} {
+        allow read, write: if isOwner(uid);
+      }
+
+      match /sanctuaryUnlocks/{themeId} {
+        allow read, write: if isOwner(uid);
+      }
     }
 
     // Duplicated safe error metadata for admin queries.

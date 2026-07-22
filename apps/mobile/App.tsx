@@ -135,6 +135,7 @@ interface MobileAuthUser {
   refreshToken: string;
   expiresAt: number;
   providerId?: "apple.com" | "google.com" | "password";
+  signedInAt?: string;
 }
 
 interface AppState {
@@ -3244,7 +3245,15 @@ function TranqlyApp() {
           setNotificationSettings({ ...DEFAULT_NOTIFICATION_SETTINGS, ...(parsed.notificationSettings || {}) });
           setSanctuaryUnlockNotifications(parsed.sanctuaryUnlockNotifications || {});
           setSeasonalSanctuaryUnlocks(parsed.seasonalSanctuaryUnlocks || {});
-          setAuthUser(parsed.authUser || null);
+          const restoredAuthUser = parsed.authUser
+            ? {
+                ...parsed.authUser,
+                signedInAt:
+                  parsed.authUser.signedInAt ??
+                  new Date(Math.max(0, parsed.authUser.expiresAt - 60 * 60 * 1000)).toISOString(),
+              }
+            : null;
+          setAuthUser(restoredAuthUser);
           setAuthEmail(parsed.authUser?.email || "");
           setDisplayName(parsed.displayName || "");
           setOnboardingName(parsed.displayName || "");
@@ -3529,6 +3538,7 @@ function TranqlyApp() {
         refreshToken: data.refreshToken,
         expiresAt: Date.now() + Number(data.expiresIn || 3600) * 1000,
         providerId: "password",
+        signedInAt: new Date().toISOString(),
       });
       setAuthPassword("");
       setShowEmailAuth(false);
@@ -4361,6 +4371,7 @@ function TranqlyApp() {
       refreshToken: data.refreshToken,
       expiresAt: Date.now() + Number(data.expiresIn || 3600) * 1000,
       providerId,
+      signedInAt: new Date().toISOString(),
     };
     setAuthUser(user);
     setAuthEmail(data.email || fallbackEmail || "");
@@ -4833,11 +4844,6 @@ function TranqlyApp() {
 
   useEffect(() => {
     if (!storageLoaded || !authUser || !FIREBASE_PROJECT_ID) return;
-    if (
-      Platform.OS === "ios" &&
-      REVENUECAT_IOS_API_KEY &&
-      revenueCatIdentityUserId !== authUser.localId
-    ) return;
     let cancelled = false;
     const timer = setTimeout(() => {
       void (async () => {
@@ -4854,6 +4860,10 @@ function TranqlyApp() {
               onboardingCoachStep,
               onboardingSkippedAt,
               onboardingCompletedAt: onboardingCoachCompletedAt,
+              authProvider: authUser.providerId ?? "password",
+              lastLoginAt:
+                authUser.signedInAt ??
+                new Date(Math.max(0, authUser.expiresAt - 60 * 60 * 1000)).toISOString(),
               subscriptionStatus: premium
                 ? "active"
                 : hasActiveComplimentaryAccess(complimentaryAccess)
@@ -4894,7 +4904,6 @@ function TranqlyApp() {
     onboardingCompleted,
     onboardingSkippedAt,
     premium,
-    revenueCatIdentityUserId,
     sanctuaryTheme,
     storageLoaded,
     streak,

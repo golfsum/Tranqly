@@ -281,8 +281,16 @@ export async function listAdminSupportTickets() {
 export async function listAdminUsers() {
   const fb = getFirebase();
   if (!fb) return [];
-  const snap = await getDocs(query(collection(fb.db, "users"), orderBy("lastActiveAt", "desc"), limit(100)));
-  return snap.docs.map((item) => ({ id: item.id, ...item.data() }));
+  const user = fb.auth.currentUser;
+  if (!user) throw new Error("Admin authentication required.");
+  const idToken = await user.getIdToken();
+  const response = await fetch("/api/admin/users", {
+    headers: { Authorization: `Bearer ${idToken}` },
+    cache: "no-store",
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || `User sync failed (${response.status}).`);
+  return Array.isArray(payload.users) ? payload.users : [];
 }
 
 export async function listAdminErrors() {

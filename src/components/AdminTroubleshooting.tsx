@@ -95,6 +95,13 @@ export default function AdminTroubleshooting() {
 
   useEffect(() => {
     void loadDashboard();
+    const interval = window.setInterval(() => void loadDashboard(), 30_000);
+    const refreshOnFocus = () => void loadDashboard();
+    window.addEventListener("focus", refreshOnFocus);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshOnFocus);
+    };
   }, []);
 
   const stats = useMemo(() => {
@@ -110,6 +117,10 @@ export default function AdminTroubleshooting() {
     todayStart.setHours(0, 0, 0, 0);
     return {
       totalUsers: users.length,
+      signedInToday: users.filter((user) => {
+        const loginAt = dateValue(user.lastLoginAt);
+        return Boolean(loginAt && loginAt >= todayStart);
+      }).length,
       activeToday: users.filter((user) => {
         const activeAt = dateValue(user.lastActiveAt);
         return Boolean(activeAt && activeAt >= todayStart);
@@ -227,6 +238,7 @@ export default function AdminTroubleshooting() {
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
         {[
           ["Total users", stats.totalUsers],
+          ["Signed in today", stats.signedInToday],
           ["Active today", stats.activeToday],
           ["iOS / Web", `${stats.iosUsers} / ${stats.webUsers}`],
           ["Premium / Free", `${stats.payingUsers} / ${stats.freeUsers}`],
@@ -368,22 +380,26 @@ export default function AdminTroubleshooting() {
                   </span>
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                  <div><p className="text-[9px] font-black uppercase tracking-wide text-faint">Sign-in</p><p className="mt-0.5 break-words">{String(user.authProvider ?? "unknown").replaceAll(".com", "")}</p></div>
+                  <div><p className="text-[9px] font-black uppercase tracking-wide text-faint">Account</p><p className="mt-0.5 break-words">{user.authStatus ?? "active"}</p></div>
                   <div><p className="text-[9px] font-black uppercase tracking-wide text-faint">Platform</p><p className="mt-0.5 break-words">{user.platformLastUsed ?? "unknown"}</p></div>
                   <div><p className="text-[9px] font-black uppercase tracking-wide text-faint">Sanctuary</p><p className="mt-0.5 break-words">{user.selectedTheme ?? "twilight"}</p></div>
                   <div><p className="text-[9px] font-black uppercase tracking-wide text-faint">Streak</p><p className="mt-0.5">{user.streakCount ?? 0}</p></div>
                   <div><p className="text-[9px] font-black uppercase tracking-wide text-faint">Reflections</p><p className="mt-0.5">{user.reflectionCount ?? 0}</p></div>
                 </div>
                 <p className="mt-3 break-words text-[10px] leading-relaxed text-faint">Last active: {formatDate(user.lastActiveAt)}</p>
+                <p className="mt-1 break-words text-[10px] leading-relaxed text-faint">Last login: {formatDate(user.lastLoginAt)}</p>
+                <p className="mt-1 break-words text-[10px] leading-relaxed text-faint">Created: {formatDate(user.createdAt)}</p>
                 {user.lastErrorCode ? <p className="mt-1 break-words text-[10px] text-rose-200">Last error: {user.lastErrorCode}</p> : null}
               </article>
             ))}
             {!users.length ? <p className="py-6 text-center text-sm text-faint">No safe user profiles found yet.</p> : null}
           </div>
           <div className="mt-3 hidden max-w-full overflow-x-auto overscroll-x-contain md:block">
-            <table className="w-full min-w-[720px] text-left text-xs">
+            <table className="w-full min-w-[1040px] text-left text-xs">
               <thead className="text-faint">
                 <tr>
-                  {["Email", "Plan", "Platform", "Theme", "Streak", "Reflections", "Last active", "Last error"].map((heading) => (
+                  {["Email", "Provider", "Status", "Plan", "Platform", "Theme", "Streak", "Reflections", "Created", "Last login", "Last active", "Last error"].map((heading) => (
                     <th key={heading} className="px-2 py-2 font-black">{heading}</th>
                   ))}
                 </tr>
@@ -392,18 +408,22 @@ export default function AdminTroubleshooting() {
                 {users.map((user) => (
                   <tr key={user.id} className="border-t border-edge/70">
                     <td className="px-2 py-2">{user.email ?? "No email"}</td>
+                    <td className="px-2 py-2">{String(user.authProvider ?? "unknown").replaceAll(".com", "")}</td>
+                    <td className="px-2 py-2">{user.authStatus ?? "active"}</td>
                     <td className="px-2 py-2">{user.plan ?? "free"}</td>
                     <td className="px-2 py-2">{user.platformLastUsed ?? "unknown"}</td>
                     <td className="px-2 py-2">{user.selectedTheme ?? "twilight"}</td>
                     <td className="px-2 py-2">{user.streakCount ?? 0}</td>
                     <td className="px-2 py-2">{user.reflectionCount ?? 0}</td>
+                    <td className="px-2 py-2 text-faint">{formatDate(user.createdAt)}</td>
+                    <td className="px-2 py-2 text-faint">{formatDate(user.lastLoginAt)}</td>
                     <td className="px-2 py-2 text-faint">{formatDate(user.lastActiveAt)}</td>
                     <td className="px-2 py-2 text-faint">{user.lastErrorCode ?? "None"}</td>
                   </tr>
                 ))}
                 {!users.length ? (
                   <tr>
-                    <td className="px-2 py-6 text-center text-faint" colSpan={8}>
+                      <td className="px-2 py-6 text-center text-faint" colSpan={12}>
                       No safe user profiles found yet.
                     </td>
                   </tr>

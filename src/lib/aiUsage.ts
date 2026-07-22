@@ -1,5 +1,5 @@
-import { addDoc, collection, doc, increment, serverTimestamp, setDoc } from "firebase/firestore";
-import { getFirebase } from "./firebase";
+import { FieldValue } from "firebase-admin/firestore";
+import { getFirebaseAdmin } from "./firebaseAdmin";
 import { GroqUsageMeta } from "./groq";
 
 export interface AiUsageLogInput extends GroqUsageMeta {
@@ -19,96 +19,95 @@ function dayKey(date = new Date()) {
 }
 
 export async function logAiUsage(input: AiUsageLogInput) {
-  const fb = getFirebase();
-  if (!fb) return;
+  try {
+    const admin = getFirebaseAdmin();
+    const uid = input.uid || "anonymous";
+    const safePayload = {
+      uid,
+      model: input.model,
+      inputTokens: input.inputTokens,
+      outputTokens: input.outputTokens,
+      totalTokens: input.totalTokens,
+      estimatedCost: input.estimatedCost,
+      feature: input.feature,
+      userPlan: input.userPlan,
+      classification: input.classification ?? null,
+      allowed: input.allowed ?? null,
+      status: input.status,
+      errorCode: input.errorCode ?? null,
+      createdAt: FieldValue.serverTimestamp(),
+    };
 
-  const uid = input.uid || "anonymous";
-  const safePayload = {
-    uid,
-    model: input.model,
-    inputTokens: input.inputTokens,
-    outputTokens: input.outputTokens,
-    totalTokens: input.totalTokens,
-    estimatedCost: input.estimatedCost,
-    feature: input.feature,
-    userPlan: input.userPlan,
-    classification: input.classification ?? null,
-    allowed: input.allowed ?? null,
-    status: input.status,
-    errorCode: input.errorCode ?? null,
-    createdAt: serverTimestamp(),
-  };
+    await admin.db.collection("aiUsageLogs").add(safePayload);
 
-  await addDoc(collection(fb.db, "aiUsageLogs"), safePayload);
-
-  const month = monthKey();
-  const today = dayKey();
-  await Promise.all([
-    setDoc(
-      doc(fb.db, "adminAiUsage", `day-${today}`),
+    const month = monthKey();
+    const today = dayKey();
+    await Promise.all([
+      admin.db.collection("adminAiUsage").doc(`day-${today}`).set(
       {
         period: "day",
         key: today,
-        totalCalls: increment(1),
-        totalTokens: increment(input.totalTokens),
-        estimatedCost: increment(input.estimatedCost),
+        totalCalls: FieldValue.increment(1),
+        totalTokens: FieldValue.increment(input.totalTokens),
+        estimatedCost: FieldValue.increment(input.estimatedCost),
         models: {
           [input.model]: {
-            calls: increment(1),
-            cost: increment(input.estimatedCost),
+            calls: FieldValue.increment(1),
+            cost: FieldValue.increment(input.estimatedCost),
           },
         },
         features: {
           [input.feature]: {
-            calls: increment(1),
-            cost: increment(input.estimatedCost),
+            calls: FieldValue.increment(1),
+            cost: FieldValue.increment(input.estimatedCost),
           },
         },
-        rejectedNonReflection: input.allowed === false ? increment(1) : increment(0),
-        updatedAt: serverTimestamp(),
+        rejectedNonReflection: FieldValue.increment(input.allowed === false ? 1 : 0),
+        updatedAt: FieldValue.serverTimestamp(),
       },
       { merge: true }
     ),
-    setDoc(
-      doc(fb.db, "adminAiUsage", `month-${month}`),
+      admin.db.collection("adminAiUsage").doc(`month-${month}`).set(
       {
         period: "month",
         key: month,
-        totalCalls: increment(1),
-        totalTokens: increment(input.totalTokens),
-        estimatedCost: increment(input.estimatedCost),
+        totalCalls: FieldValue.increment(1),
+        totalTokens: FieldValue.increment(input.totalTokens),
+        estimatedCost: FieldValue.increment(input.estimatedCost),
         models: {
           [input.model]: {
-            calls: increment(1),
-            cost: increment(input.estimatedCost),
+            calls: FieldValue.increment(1),
+            cost: FieldValue.increment(input.estimatedCost),
           },
         },
         features: {
           [input.feature]: {
-            calls: increment(1),
-            cost: increment(input.estimatedCost),
+            calls: FieldValue.increment(1),
+            cost: FieldValue.increment(input.estimatedCost),
           },
         },
-        rejectedNonReflection: input.allowed === false ? increment(1) : increment(0),
-        updatedAt: serverTimestamp(),
+        rejectedNonReflection: FieldValue.increment(input.allowed === false ? 1 : 0),
+        updatedAt: FieldValue.serverTimestamp(),
       },
       { merge: true }
     ),
-    setDoc(
-      doc(fb.db, "adminAiUserUsage", uid),
+      admin.db.collection("adminAiUserUsage").doc(uid).set(
       {
         uid,
-        totalCalls: increment(1),
-        totalTokens: increment(input.totalTokens),
-        estimatedCost: increment(input.estimatedCost),
-        rejectedNonReflection: input.allowed === false ? increment(1) : increment(0),
+        totalCalls: FieldValue.increment(1),
+        totalTokens: FieldValue.increment(input.totalTokens),
+        estimatedCost: FieldValue.increment(input.estimatedCost),
+        rejectedNonReflection: FieldValue.increment(input.allowed === false ? 1 : 0),
         lastClassification: input.classification ?? null,
         lastAllowed: input.allowed ?? null,
         lastFeature: input.feature,
         lastModel: input.model,
-        lastUsedAt: serverTimestamp(),
+        lastUsedAt: FieldValue.serverTimestamp(),
       },
       { merge: true }
     ),
-  ]);
+    ]);
+  } catch (error) {
+    console.warn("AI usage logging failed", error instanceof Error ? error.message : error);
+  }
 }
