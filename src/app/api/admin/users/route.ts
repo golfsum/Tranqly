@@ -18,6 +18,15 @@ function authProviders(user: UserRecord) {
   return user.providerData.map((provider) => provider.providerId).filter(Boolean).join(",") || "password";
 }
 
+function normalizedEmail(value: unknown) {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function profileTimestamp(profile: Record<string, any>) {
+  const value = isoValue(profile.lastActiveAt) || isoValue(profile.lastLoginAt) || isoValue(profile.updatedAt) || isoValue(profile.createdAt);
+  return value ? new Date(value).getTime() : 0;
+}
+
 export async function GET(request: NextRequest) {
   try {
     // Keep Firebase Admin out of module initialization so a bad production
@@ -45,9 +54,24 @@ export async function GET(request: NextRequest) {
     const profileSnapshot = await admin.db.collection("users").get();
     const profiles = new Map(profileSnapshot.docs.map((item) => [item.id, item.data()]));
     const authIds = new Set(authUsers.map((user) => user.uid));
+    const authEmails = new Set(authUsers.map((user) => normalizedEmail(user.email)).filter(Boolean));
+    const profilesByEmail = new Map<string, Array<{ id: string; profile: Record<string, any> }>>();
+    for (const [id, profile] of profiles) {
+      const email = normalizedEmail(profile.email);
+      if (!email) continue;
+      const matches = profilesByEmail.get(email) ?? [];
+      matches.push({ id, profile });
+      profilesByEmail.set(email, matches);
+    }
+    const linkedProfileIds = new Set<string>();
 
     const users = authUsers.map((user) => {
-      const profile = profiles.get(user.uid) ?? {};
+      const exactProfile = profiles.get(user.uid);
+      const emailMatches = profilesByEmail.get(normalizedEmail(user.email)) ?? [];
+      const legacyMatch = emailMatches.sort((a, b) => profileTimestamp(b.profile) - profileTimestamp(a.profile))[0];
+      const profile = exactProfile ?? legacyMatch?.profile ?? {};
+      if (exactProfile) linkedProfileIds.add(user.uid);
+      else if (legacyMatch) linkedProfileIds.add(legacyMatch.id);
       const createdAt = user.metadata.creationTime || isoValue(profile.createdAt);
       const lastLoginAt = user.metadata.lastSignInTime || isoValue(profile.lastLoginAt);
       const lastSessionAt = user.metadata.lastRefreshTime || lastLoginAt;
@@ -74,7 +98,9 @@ export async function GET(request: NextRequest) {
     });
 
     for (const [uid, profile] of profiles) {
-      if (authIds.has(uid)) continue;
+      // Legacy mobile profiles can predate sign-in and use a local document ID.
+      // Their email metadata is folded into the corresponding Auth row above.
+      if (authIds.has(uid) || linkedProfileIds.has(uid) || authEmails.has(normalizedEmail(profile.email))) continue;
       users.push({
         ...profile,
         id: uid,
