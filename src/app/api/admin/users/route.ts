@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { UserRecord } from "firebase-admin/auth";
-import { getFirebaseAdmin } from "@/lib/firebaseAdmin";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 function isoValue(value: unknown): string | null {
   if (!value) return null;
@@ -20,6 +20,9 @@ function authProviders(user: UserRecord) {
 
 export async function GET(request: NextRequest) {
   try {
+    // Keep Firebase Admin out of module initialization so a bad production
+    // credential returns a useful JSON error instead of crashing the route.
+    const { getFirebaseAdmin } = await import("@/lib/firebaseAdmin");
     const admin = getFirebaseAdmin();
     const authorization = request.headers.get("authorization") ?? "";
     const idToken = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
@@ -102,7 +105,13 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ users, authUserCount: authUsers.length, generatedAt: new Date().toISOString() });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Could not load Firebase users.";
+    const originalMessage = error instanceof Error ? error.message : "Could not load Firebase users.";
+    const message =
+      originalMessage.includes("DECODER routines") ||
+      originalMessage.includes("Invalid PEM") ||
+      originalMessage.includes("private key")
+        ? "Firebase Admin credentials are invalid. In Vercel, use the service-account client_email and the complete private_key from the same Firebase service-account JSON."
+        : originalMessage;
     const status = message.includes("not configured") ? 503 : 500;
     return NextResponse.json({ error: message }, { status });
   }

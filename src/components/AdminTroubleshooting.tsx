@@ -59,6 +59,10 @@ export default function AdminTroubleshooting() {
   const adminDocumentUrl = adminUid
     ? `https://console.firebase.google.com/project/${firebaseProjectId}/firestore/databases/-default-/data/~2Fadmins~2F${adminUid}`
     : `https://console.firebase.google.com/project/${firebaseProjectId}/firestore/databases/-default-/data/~2Fadmins`;
+  const hasServerConfigError = loadErrors.some((error) =>
+    /Firebase Admin|service-account|FIREBASE_ADMIN|User sync failed \(500\)|User sync failed \(503\)/i.test(error)
+  );
+  const hasRulesError = loadErrors.some((error) => /Missing or insufficient permissions/i.test(error));
 
   async function loadDashboard() {
     if (!firebaseConfigured()) return;
@@ -200,14 +204,30 @@ export default function AdminTroubleshooting() {
         <div className="mb-4 rounded-2xl border border-rose-400/30 bg-rose-400/10 p-4 text-sm text-rose-100">
           <p className="font-black">Some live dashboard data could not load.</p>
           <p className="mt-1 leading-relaxed">
-            Your login is valid, but this account has not been granted Firestore admin access yet.
+            {hasServerConfigError
+              ? "The server-side Firebase credentials in Vercel are missing or invalid."
+              : hasRulesError
+                ? "Your admin record exists, but the deployed Firestore rules have not granted this account access."
+                : "The dashboard could not verify this account's admin access."}
           </p>
-          <div className="mt-3 rounded-xl border border-rose-200/20 bg-ink/35 p-3 text-xs leading-relaxed text-rose-50/90">
-            <p>Create document <span className="font-black">admins/{adminUid || "your-admin-uid"}</span> with:</p>
-            <p className="mt-1 font-mono">active: true</p>
-            <p className="font-mono">role: &quot;admin&quot;</p>
-            <p className="font-mono">email: &quot;{getFirebase()?.auth.currentUser?.email ?? "your admin email"}&quot;</p>
-          </div>
+          {hasServerConfigError ? (
+            <div className="mt-3 rounded-xl border border-rose-200/20 bg-ink/35 p-3 text-xs leading-relaxed text-rose-50/90">
+              <p className="font-black">Vercel Production variables</p>
+              <p className="mt-1"><span className="font-mono">FIREBASE_ADMIN_PROJECT_ID</span>: {firebaseProjectId}</p>
+              <p><span className="font-mono">FIREBASE_ADMIN_CLIENT_EMAIL</span>: the existing firebase-adminsdk service-account email</p>
+              <p><span className="font-mono">FIREBASE_ADMIN_PRIVATE_KEY</span>: the complete private_key from that same JSON file</p>
+              <p className="mt-2">Do not use the Tranqly login email for <span className="font-mono">FIREBASE_ADMIN_CLIENT_EMAIL</span>.</p>
+            </div>
+          ) : (
+            <div className="mt-3 rounded-xl border border-rose-200/20 bg-ink/35 p-3 text-xs leading-relaxed text-rose-50/90">
+              <p>Create document <span className="font-black">admins/{adminUid || "your-admin-uid"}</span> with:</p>
+              <p className="mt-1 font-mono">active: true</p>
+              <p className="font-mono">role: &quot;admin&quot;</p>
+              <p className="font-mono">email: &quot;{getFirebase()?.auth.currentUser?.email ?? "your admin email"}&quot;</p>
+              <p className="mt-2">Create a separate document for every admin account UID. Do not combine multiple email addresses in one document.</p>
+              {hasRulesError ? <p className="mt-2">Then deploy <span className="font-mono">firestore.rules</span>. A Vercel redeploy does not deploy Firebase rules.</p> : null}
+            </div>
+          )}
           <div className="mt-3 flex flex-wrap gap-2">
             <a
               href={adminDocumentUrl}
