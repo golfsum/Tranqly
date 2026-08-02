@@ -669,30 +669,44 @@ const REVENUECAT_CONFIG_ERROR = !configuredRevenueCatKey
     ? "App Store billing needs the RevenueCat public iOS SDK key."
     : "";
 
-function getValidatedStorePackages(offering: PurchasesOffering): {
-  monthlyPackage: PurchasesPackage;
-  yearlyPackage: PurchasesPackage;
+function getAvailableStorePackages(offering: PurchasesOffering): {
+  monthlyPackage: PurchasesPackage | null;
+  yearlyPackage: PurchasesPackage | null;
 } {
-  const monthlyPackage = offering.monthly ?? offering.availablePackages.find((item) => item.packageType === "MONTHLY");
-  const yearlyPackage = offering.annual ?? offering.availablePackages.find((item) => item.packageType === "ANNUAL");
+  const monthlyCandidate =
+    offering.monthly ?? offering.availablePackages.find((item) => item.packageType === "MONTHLY") ?? null;
+  const yearlyCandidate =
+    offering.annual ?? offering.availablePackages.find((item) => item.packageType === "ANNUAL") ?? null;
+  let monthlyPackage =
+    monthlyCandidate?.product.subscriptionPeriod && monthlyCandidate.product.subscriptionPeriod !== "P1M"
+      ? null
+      : monthlyCandidate;
+  let yearlyPackage =
+    yearlyCandidate?.product.subscriptionPeriod && yearlyCandidate.product.subscriptionPeriod !== "P1Y"
+      ? null
+      : yearlyCandidate;
 
-  if (!monthlyPackage || !yearlyPackage) {
-    throw new Error("RevenueCat current offering must include monthly and annual packages.");
+  if (
+    monthlyPackage &&
+    yearlyPackage &&
+    monthlyPackage.product.identifier === yearlyPackage.product.identifier
+  ) {
+    if (monthlyPackage.product.subscriptionPeriod === "P1M") yearlyPackage = null;
+    else if (yearlyPackage.product.subscriptionPeriod === "P1Y") monthlyPackage = null;
+    else throw new Error("RevenueCat monthly and annual packages use the same App Store product.");
   }
-  if (monthlyPackage.product.identifier === yearlyPackage.product.identifier) {
-    throw new Error("RevenueCat monthly and annual packages must use different App Store products.");
-  }
-  if (monthlyPackage.product.subscriptionPeriod && monthlyPackage.product.subscriptionPeriod !== "P1M") {
-    throw new Error("RevenueCat monthly package is not attached to a monthly App Store product.");
-  }
-  if (yearlyPackage.product.subscriptionPeriod && yearlyPackage.product.subscriptionPeriod !== "P1Y") {
-    throw new Error("RevenueCat annual package is not attached to a yearly App Store product.");
-  }
-  if (yearlyPackage.product.price <= monthlyPackage.product.price) {
-    throw new Error("RevenueCat annual package returned an invalid full-year price.");
+  if (!monthlyPackage && !yearlyPackage) {
+    throw new Error("RevenueCat has no valid monthly or annual App Store package.");
   }
 
   return { monthlyPackage, yearlyPackage };
+}
+
+function getActivePlusEntitlement(customerInfo: CustomerInfo) {
+  const configuredEntitlement = customerInfo.entitlements.active[REVENUECAT_ENTITLEMENT_ID];
+  if (configuredEntitlement) return configuredEntitlement;
+  const activeEntitlements = Object.values(customerInfo.entitlements.active);
+  return activeEntitlements.length === 1 ? activeEntitlements[0] : undefined;
 }
 const configuredApiBaseUrl =
   process.env.EXPO_PUBLIC_API_BASE_URL ||
@@ -3384,7 +3398,7 @@ function TranqlyApp() {
     let cancelled = false;
     const updatePremiumAccess = (customerInfo: CustomerInfo) => {
       if (!cancelled && revenueCatIdentityUserRef.current === authUserIdRef.current) {
-        const entitlement = customerInfo.entitlements.active[REVENUECAT_ENTITLEMENT_ID];
+        const entitlement = getActivePlusEntitlement(customerInfo);
         setPremium(Boolean(entitlement));
         setActiveSubscriptionProductId(entitlement?.productIdentifier ?? customerInfo.activeSubscriptions[0] ?? null);
       }
@@ -3413,12 +3427,12 @@ function TranqlyApp() {
         setRevenueCatIdentityUserId(expectedUserId);
         updatePremiumAccess(customerInfo);
         const offerings = await Purchases.getOfferings();
-        const currentOffering = offerings.current;
+        const currentOffering = offerings.current ?? Object.values(offerings.all)[0] ?? null;
         if (!currentOffering) {
-          throw new Error("RevenueCat has no current offering configured.");
+          throw new Error("RevenueCat has no offering with an App Store subscription.");
         }
         if (!cancelled) {
-          const { monthlyPackage, yearlyPackage } = getValidatedStorePackages(currentOffering);
+          const { monthlyPackage, yearlyPackage } = getAvailableStorePackages(currentOffering);
           setStorePrices({
             monthly: monthlyPackage?.product.priceString ?? null,
             yearly: yearlyPackage?.product.priceString ?? null,
@@ -3426,6 +3440,11 @@ function TranqlyApp() {
           setStoreProductIds({
             monthly: monthlyPackage?.product.identifier ?? null,
             yearly: yearlyPackage?.product.identifier ?? null,
+          });
+          setSelectedPlan((current) => {
+            if (current === "yearly" && !yearlyPackage && monthlyPackage) return "monthly";
+            if (current === "monthly" && !monthlyPackage && yearlyPackage) return "yearly";
+            return current;
           });
           setPurchasesReady(true);
         }
@@ -3473,7 +3492,7 @@ function TranqlyApp() {
         revenueCatIdentityUserRef.current = authUser?.localId ?? null;
         setRevenueCatIdentityUserId(authUser?.localId ?? null);
         if (!cancelled && customerInfo) {
-          const entitlement = customerInfo.entitlements.active[REVENUECAT_ENTITLEMENT_ID];
+          const entitlement = getActivePlusEntitlement(customerInfo);
           setPremium(Boolean(entitlement));
           setActiveSubscriptionProductId(entitlement?.productIdentifier ?? customerInfo.activeSubscriptions[0] ?? null);
         }
@@ -4575,92 +4594,79 @@ function TranqlyApp() {
     setCurrentOnboardingStep(next);
   }
 
-  async function refreshAppStorePlans() {
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    if (Platform.OS !== "ios" || !REVENUECAT_IOS_API_KEY) {
-      setPurchasesReady(false);
-      setPurchaseSetupError(REVENUECAT_CONFIG_ERROR || "App Store billing is not configured in this build.");
-      Alert.alert(
-        "App Store plans unavailable",
-        REVENUECAT_CONFIG_ERROR || "App Store billing is not configured in this build."
-      );
-      return;
-    }
-    setPurchasesLoading(true);
-    setPurchaseSetupError("");
-    try {
-      await Purchases.setLogLevel(__DEV__ ? LOG_LEVEL.DEBUG : LOG_LEVEL.ERROR);
-      const alreadyConfigured = await Purchases.isConfigured().catch(() => false);
-      if (!alreadyConfigured) Purchases.configure({ apiKey: REVENUECAT_IOS_API_KEY });
-      purchasesConfiguredRef.current = true;
-      const customerInfo = await Purchases.getCustomerInfo();
-      const entitlement = customerInfo.entitlements.active[REVENUECAT_ENTITLEMENT_ID];
-      setPremium(Boolean(entitlement));
-      setActiveSubscriptionProductId(entitlement?.productIdentifier ?? customerInfo.activeSubscriptions[0] ?? null);
-      const offerings = await Purchases.getOfferings();
-      const currentOffering = offerings.current;
-      if (!currentOffering) throw new Error("RevenueCat has no current offering configured.");
-      const { monthlyPackage, yearlyPackage } = getValidatedStorePackages(currentOffering);
-      setStorePrices({
-        monthly: monthlyPackage.product.priceString,
-        yearly: yearlyPackage.product.priceString,
-      });
-      setStoreProductIds({
-        monthly: monthlyPackage.product.identifier,
-        yearly: yearlyPackage.product.identifier,
-      });
-      setPurchasesReady(true);
-    } catch (error) {
-      setPurchasesReady(false);
-      setPurchaseSetupError("Tranqly could not load App Store plans. Tap Retry App Store.");
-      console.warn("RevenueCat plan refresh failed", error);
-      logMobileApiError({
-        errorCode: "revenuecat_plan_refresh_failed",
-        errorMessage: error instanceof Error ? error.message : "RevenueCat plan refresh failed",
-        featureArea: "purchases",
-      });
-    } finally {
-      setPurchasesLoading(false);
-    }
-  }
-
   async function startCheckout(planOverride?: "monthly" | "yearly") {
     const checkoutPlan = planOverride ?? selectedPlan;
+    const shouldOnlyRefreshPlans = Platform.OS === "ios" && !purchasesReady;
     const wasPremium = premium;
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     if (Platform.OS === "ios") {
-      if (!REVENUECAT_IOS_API_KEY || !purchasesConfiguredRef.current || !purchasesReady) {
+      if (!REVENUECAT_IOS_API_KEY) {
         Alert.alert(
           "Purchases unavailable",
-          "App Store purchases are not configured for this build yet."
+          REVENUECAT_CONFIG_ERROR || "App Store purchases are not configured for this build yet."
         );
         return;
       }
       setCheckoutBusy(true);
+      setPurchaseSetupError("");
       try {
-        const offerings = await Purchases.getOfferings();
-        const currentOffering = offerings.current;
-        if (currentOffering) {
-          const { monthlyPackage, yearlyPackage } = getValidatedStorePackages(currentOffering);
-          setStorePrices({
-            monthly: monthlyPackage.product.priceString,
-            yearly: yearlyPackage.product.priceString,
-          });
-          setStoreProductIds({
-            monthly: monthlyPackage.product.identifier,
-            yearly: yearlyPackage.product.identifier,
+        await Purchases.setLogLevel(__DEV__ ? LOG_LEVEL.DEBUG : LOG_LEVEL.ERROR);
+        const alreadyConfigured = await Purchases.isConfigured().catch(() => false);
+        if (!alreadyConfigured) {
+          Purchases.configure({
+            apiKey: REVENUECAT_IOS_API_KEY,
+            appUserID: authUserIdRef.current ?? undefined,
           });
         }
-        const validatedPackages = currentOffering ? getValidatedStorePackages(currentOffering) : null;
+        purchasesConfiguredRef.current = true;
+        const expectedUserId = authUserIdRef.current;
+        const currentAppUserId = await Purchases.getAppUserID();
+        if (expectedUserId && currentAppUserId !== expectedUserId) {
+          await Purchases.logIn(expectedUserId);
+        }
+        revenueCatIdentityUserRef.current = expectedUserId;
+        setRevenueCatIdentityUserId(expectedUserId);
+        const offerings = await Purchases.getOfferings();
+        const currentOffering = offerings.current ?? Object.values(offerings.all)[0] ?? null;
+        if (!currentOffering) {
+          throw new Error("RevenueCat has no offering with an App Store subscription.");
+        }
+        const validatedPackages = getAvailableStorePackages(currentOffering);
+        setStorePrices({
+          monthly: validatedPackages.monthlyPackage?.product.priceString ?? null,
+          yearly: validatedPackages.yearlyPackage?.product.priceString ?? null,
+        });
+        setStoreProductIds({
+          monthly: validatedPackages.monthlyPackage?.product.identifier ?? null,
+          yearly: validatedPackages.yearlyPackage?.product.identifier ?? null,
+        });
+        setPurchasesReady(true);
+        if (shouldOnlyRefreshPlans) {
+          setSelectedPlan((current) => {
+            if (current === "yearly" && !validatedPackages.yearlyPackage && validatedPackages.monthlyPackage) {
+              return "monthly";
+            }
+            if (current === "monthly" && !validatedPackages.monthlyPackage && validatedPackages.yearlyPackage) {
+              return "yearly";
+            }
+            return current;
+          });
+          return;
+        }
         const planPackage = checkoutPlan === "yearly"
-          ? validatedPackages?.yearlyPackage
-          : validatedPackages?.monthlyPackage;
+          ? validatedPackages.yearlyPackage
+          : validatedPackages.monthlyPackage;
         if (!planPackage) {
-          Alert.alert("Checkout unavailable", "Tranqly Plus is not available in this build yet.");
+          const availablePlan = validatedPackages.yearlyPackage ? "yearly" : "monthly";
+          setSelectedPlan(availablePlan);
+          Alert.alert(
+            `${checkoutPlan === "yearly" ? "Yearly" : "Monthly"} plan unavailable`,
+            `The ${availablePlan} Tranqly Plus plan is available. Review that plan, then tap Continue my Journey again.`
+          );
           return;
         }
         const result = await Purchases.purchasePackage(planPackage);
-        const activeEntitlement = result.customerInfo.entitlements.active[REVENUECAT_ENTITLEMENT_ID];
+        const activeEntitlement = getActivePlusEntitlement(result.customerInfo);
         const plusActive = Boolean(activeEntitlement);
         if (!plusActive) {
           Alert.alert("Purchase not activated", "The App Store did not activate Tranqly Plus. Please try again.");
@@ -4689,7 +4695,17 @@ function TranqlyApp() {
         const purchaseError = error as { userCancelled?: boolean; message?: string };
         if (!purchaseError.userCancelled) {
           console.warn("RevenueCat purchase failed", error);
-          Alert.alert("Checkout unavailable", "Checkout could not start. Please try again.");
+          setPurchasesReady(false);
+          setPurchaseSetupError("Tranqly could not connect to the App Store. Tap Continue my Journey to try again.");
+          logMobileApiError({
+            errorCode: "revenuecat_purchase_failed",
+            errorMessage: purchaseError.message || "RevenueCat purchase failed",
+            featureArea: "purchases",
+          });
+          Alert.alert(
+            "Checkout unavailable",
+            "Tranqly could not connect to the App Store. No purchase was made. Please try again."
+          );
         }
         return;
       } finally {
@@ -4725,14 +4741,29 @@ function TranqlyApp() {
 
   async function restoreAppStorePurchases() {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    if (Platform.OS !== "ios" || !REVENUECAT_IOS_API_KEY || !purchasesConfiguredRef.current || !purchasesReady) {
+    if (Platform.OS !== "ios" || !REVENUECAT_IOS_API_KEY) {
       Alert.alert("Restore unavailable", "App Store purchases are not configured for this build yet.");
       return;
     }
     setCheckoutBusy(true);
     try {
+      const alreadyConfigured = await Purchases.isConfigured().catch(() => false);
+      if (!alreadyConfigured) {
+        Purchases.configure({
+          apiKey: REVENUECAT_IOS_API_KEY,
+          appUserID: authUserIdRef.current ?? undefined,
+        });
+      }
+      purchasesConfiguredRef.current = true;
+      const expectedUserId = authUserIdRef.current;
+      const currentAppUserId = await Purchases.getAppUserID();
+      if (expectedUserId && currentAppUserId !== expectedUserId) {
+        await Purchases.logIn(expectedUserId);
+      }
+      revenueCatIdentityUserRef.current = expectedUserId;
+      setRevenueCatIdentityUserId(expectedUserId);
       const customerInfo = await Purchases.restorePurchases();
-      const activeEntitlement = customerInfo.entitlements.active[REVENUECAT_ENTITLEMENT_ID];
+      const activeEntitlement = getActivePlusEntitlement(customerInfo);
       const plusActive = Boolean(activeEntitlement);
       setPremium(plusActive);
       setActiveSubscriptionProductId(activeEntitlement?.productIdentifier ?? customerInfo.activeSubscriptions[0] ?? null);
@@ -4950,6 +4981,11 @@ function TranqlyApp() {
   const firstWeekPlanBilling = selectedPlan === "yearly"
     ? storePrices.yearly ? `${storePrices.yearly} billed annually` : "Loading App Store price..."
     : storePrices.monthly ? `${storePrices.monthly} billed monthly` : "Loading App Store price...";
+  const selectedPlanPrice = selectedPlan === "yearly" ? storePrices.yearly : storePrices.monthly;
+  const selectedPlanCycle = selectedPlan === "yearly" ? "Yearly subscription" : "Monthly subscription";
+  const selectedPlanBilling = selectedPlan === "yearly" ? "billed annually" : "billed monthly";
+  const yearlyPlanUnavailable = Platform.OS === "ios" && purchasesReady && !storeProductIds.yearly;
+  const monthlyPlanUnavailable = Platform.OS === "ios" && purchasesReady && !storeProductIds.monthly;
   function markFirstWeekConversionSeen() {
     setComplimentaryAccess((current) =>
       current
@@ -6424,12 +6460,12 @@ function TranqlyApp() {
                         <Text style={[styles.premiumPlanDetail, themedMuted]}>Continue one month at a time.</Text>
                       </Pressable>
                     </View>
-                    <Pressable
-                      accessibilityRole="button"
-                      onPress={() => void restoreAppStorePurchases()}
-                      disabled={checkoutBusy || (Platform.OS === "ios" && !purchasesReady)}
-                      style={[styles.subscriptionRestoreButton, { borderColor: appTheme.edge }]}
-                    >
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={() => void restoreAppStorePurchases()}
+                        disabled={checkoutBusy}
+                        style={[styles.subscriptionRestoreButton, { borderColor: appTheme.edge }]}
+                      >
                       <Text style={[styles.authMetaText, themedMuted]}>Restore an existing purchase</Text>
                     </Pressable>
                   </View>
@@ -7687,13 +7723,15 @@ function TranqlyApp() {
                 <View style={styles.premiumPlanGrid}>
                   <Pressable
                     accessibilityRole="button"
-                    accessibilityState={{ selected: selectedPlan === "yearly" }}
+                    accessibilityState={{ selected: selectedPlan === "yearly", disabled: yearlyPlanUnavailable }}
+                    disabled={yearlyPlanUnavailable}
                     onPress={() => setSelectedPlan("yearly")}
                     style={[
                       styles.premiumPlanCard,
                       styles.firstWeekYearlyPlanCard,
                       { borderColor: selectedPlan === "yearly" ? appTheme.accent : appTheme.edge },
                       selectedPlan === "yearly" && { backgroundColor: appTheme.helperBg, shadowColor: appTheme.accent },
+                      yearlyPlanUnavailable && { opacity: 0.5 },
                     ]}
                   >
                     <View style={styles.premiumPlanHeader}>
@@ -7701,23 +7739,25 @@ function TranqlyApp() {
                       <Text style={[styles.premiumPlanBadge, { color: appTheme.accent2 }]}>BEST VALUE</Text>
                     </View>
                     <Text style={[styles.premiumPlanPrice, themedTitle]}>
-                      {storePrices.yearly ? `${storePrices.yearly} per year` : "Loading price..."}
+                      {storePrices.yearly ? `${storePrices.yearly} per year` : yearlyPlanUnavailable ? "Unavailable" : "Loading price..."}
                     </Text>
                     <Text style={[styles.premiumPlanDetail, themedMuted]}>About $5 per month. Save compared to monthly.</Text>
                   </Pressable>
                   <Pressable
                     accessibilityRole="button"
-                    accessibilityState={{ selected: selectedPlan === "monthly" }}
+                    accessibilityState={{ selected: selectedPlan === "monthly", disabled: monthlyPlanUnavailable }}
+                    disabled={monthlyPlanUnavailable}
                     onPress={() => setSelectedPlan("monthly")}
                     style={[
                       styles.premiumPlanCard,
                       { borderColor: selectedPlan === "monthly" ? appTheme.accent : appTheme.edge },
                       selectedPlan === "monthly" && { backgroundColor: appTheme.helperBg },
+                      monthlyPlanUnavailable && { opacity: 0.5 },
                     ]}
                   >
                     <Text style={[styles.premiumPlanName, themedTitle]}>Monthly</Text>
                     <Text style={[styles.premiumPlanPrice, themedTitle]}>
-                      {storePrices.monthly ? `${storePrices.monthly} per month` : "Loading price..."}
+                      {storePrices.monthly ? `${storePrices.monthly} per month` : monthlyPlanUnavailable ? "Unavailable" : "Loading price..."}
                     </Text>
                     <Text style={[styles.premiumPlanDetail, themedMuted]}>Continue month to month.</Text>
                   </Pressable>
@@ -7731,10 +7771,17 @@ function TranqlyApp() {
                   <Text style={[styles.firstWeekSelectedPlanTitle, themedTitle]}>{firstWeekPlanLabel}</Text>
                   <Text style={[styles.firstWeekSelectedPlanDetail, themedMuted]}>{firstWeekPlanBilling}</Text>
                 </View>
+                <Text style={[styles.subscriptionDisclosureTitle, themedTitle]}>
+                  Tranqly Plus - {selectedPlanCycle}
+                </Text>
+                <Text style={[styles.subscriptionDisclosure, themedMuted]}>
+                  {selectedPlanPrice ? `${selectedPlanPrice} ${selectedPlanBilling}. ` : ""}
+                  Payment is charged to your Apple ID when you confirm. Subscription automatically renews unless canceled at least 24 hours before the end of the current billing period. Your account is charged for renewal within 24 hours before the period ends. Manage or cancel in App Store account settings.
+                </Text>
                 <Pressable
                   onPress={() => { markFirstWeekConversionSeen(); void startCheckout(); }}
-                  disabled={checkoutBusy || (Platform.OS === "ios" && !purchasesReady)}
-                  style={[styles.premiumUpgradeButton, (checkoutBusy || (Platform.OS === "ios" && !purchasesReady)) && { opacity: 0.55 }]}
+                  disabled={checkoutBusy || (Platform.OS === "ios" && purchasesLoading)}
+                  style={[styles.premiumUpgradeButton, (checkoutBusy || (Platform.OS === "ios" && purchasesLoading)) && { opacity: 0.55 }]}
                 >
                   <LinearGradient
                     colors={[appTheme.button, appTheme.button]}
@@ -7743,22 +7790,28 @@ function TranqlyApp() {
                     style={styles.premiumUpgradeGradient}
                   >
                     <Text style={[styles.premiumUpgradeText, themedTitle]}>
-                      {checkoutBusy ? "Opening checkout..." : Platform.OS === "ios" && !purchasesReady ? "Loading App Store..." : "Continue my Journey"}
+                      {checkoutBusy
+                        ? "Opening checkout..."
+                        : Platform.OS === "ios" && purchasesLoading
+                          ? "Connecting to App Store..."
+                          : Platform.OS === "ios" && !purchasesReady
+                            ? "Try App Store Again"
+                            : "Continue my Journey"}
                     </Text>
                   </LinearGradient>
                 </Pressable>
                 <Pressable onPress={markFirstWeekConversionSeen} style={styles.premiumCloseButton}>
                   <Text style={[styles.premiumCloseText, themedMuted]}>Maybe Later</Text>
                 </Pressable>
-                <Pressable onPress={() => void restoreAppStorePurchases()} disabled={checkoutBusy || (Platform.OS === "ios" && !purchasesReady)} style={styles.premiumCloseButton}>
+                <Pressable onPress={() => void restoreAppStorePurchases()} disabled={checkoutBusy} style={styles.premiumCloseButton}>
                   <Text style={[styles.premiumCloseText, themedAccent]}>Restore purchases</Text>
                 </Pressable>
                 <View style={{ flexDirection: "row", justifyContent: "center", gap: 24 }}>
-                  <Pressable onPress={() => void Linking.openURL("https://tranqly.app/terms")}>
-                    <Text style={[styles.premiumPriceNote, themedMuted]}>Terms</Text>
+                  <Pressable accessibilityRole="link" onPress={() => void Linking.openURL("https://tranqly.app/terms")}>
+                    <Text style={[styles.subscriptionLegalLink, themedAccent]}>Terms of Use (EULA)</Text>
                   </Pressable>
-                  <Pressable onPress={() => void Linking.openURL("https://tranqly.app/privacy")}>
-                    <Text style={[styles.premiumPriceNote, themedMuted]}>Privacy</Text>
+                  <Pressable accessibilityRole="link" onPress={() => void Linking.openURL("https://tranqly.app/privacy")}>
+                    <Text style={[styles.subscriptionLegalLink, themedAccent]}>Privacy Policy</Text>
                   </Pressable>
                 </View>
                 </View>
@@ -7888,6 +7941,10 @@ function TranqlyApp() {
                 style={[styles.premiumModalCard, themedCard, shortLayout && styles.modalCardShort]}
                 onPress={() => {}}
               >
+                <ScrollView
+                  showsVerticalScrollIndicator={false}
+                  contentContainerStyle={styles.premiumModalScroll}
+                >
                 <View style={styles.modalHandle} />
                 <View style={[styles.premiumLotusIcon, { borderColor: appTheme.accent, backgroundColor: appTheme.helperBg }]}>
                   <ThemeIcon type="blossom" color={appTheme.accent2} size={28} />
@@ -7916,11 +7973,13 @@ function TranqlyApp() {
                 <View style={styles.premiumPlanGrid}>
                   <Pressable
                     onPress={() => setSelectedPlan("yearly")}
-                    accessibilityState={{ selected: selectedPlan === "yearly" }}
+                    disabled={yearlyPlanUnavailable}
+                    accessibilityState={{ selected: selectedPlan === "yearly", disabled: yearlyPlanUnavailable }}
                     style={[
                       styles.premiumPlanCard,
                       { borderColor: selectedPlan === "yearly" ? appTheme.accent : appTheme.edge },
                       selectedPlan === "yearly" && { backgroundColor: appTheme.helperBg },
+                      yearlyPlanUnavailable && { opacity: 0.5 },
                     ]}
                   >
                     <View style={styles.premiumPlanHeader}>
@@ -7928,18 +7987,22 @@ function TranqlyApp() {
                       <Text style={[styles.premiumPlanBadge, { color: appTheme.accent2 }]}>BEST VALUE</Text>
                     </View>
                     <Text style={[styles.premiumPlanPrice, themedTitle]}>
-                      {storePrices.yearly ? `${storePrices.yearly} per year` : purchasesLoading ? "Loading price..." : "Unavailable"}
+                      {storePrices.yearly ? `${storePrices.yearly} per year` : purchasesLoading || !purchasesReady ? "Loading price..." : "Unavailable"}
                     </Text>
                     <Text style={[styles.premiumPlanDetail, themedMuted]}>Billed annually</Text>
                   </Pressable>
                   <Pressable
                     onPress={() => setSelectedPlan("monthly")}
-                    disabled={premium && activePaidPlan === "monthly"}
-                    accessibilityState={{ selected: selectedPlan === "monthly", disabled: premium && activePaidPlan === "monthly" }}
+                    disabled={(premium && activePaidPlan === "monthly") || monthlyPlanUnavailable}
+                    accessibilityState={{
+                      selected: selectedPlan === "monthly",
+                      disabled: (premium && activePaidPlan === "monthly") || monthlyPlanUnavailable,
+                    }}
                     style={[
                       styles.premiumPlanCard,
                       { borderColor: selectedPlan === "monthly" ? appTheme.accent : appTheme.edge },
                       selectedPlan === "monthly" && { backgroundColor: appTheme.helperBg },
+                      monthlyPlanUnavailable && { opacity: 0.5 },
                     ]}
                   >
                     <View style={styles.premiumPlanHeader}>
@@ -7957,8 +8020,15 @@ function TranqlyApp() {
                 {Platform.OS === "ios" && purchaseSetupError ? (
                   <Text style={[styles.premiumPriceNote, themedMuted]}>{purchaseSetupError}</Text>
                 ) : null}
+                <Text style={[styles.subscriptionDisclosureTitle, themedTitle]}>
+                  Tranqly Plus - {selectedPlanCycle}
+                </Text>
+                <Text style={[styles.subscriptionDisclosure, themedMuted]}>
+                  {selectedPlanPrice ? `${selectedPlanPrice} ${selectedPlanBilling}. ` : ""}
+                  Payment is charged to your Apple ID when you confirm. Subscription automatically renews unless canceled at least 24 hours before the end of the current billing period. Your account is charged for renewal within 24 hours before the period ends. Manage or cancel in App Store account settings.
+                </Text>
                 <Pressable
-                  onPress={() => Platform.OS === "ios" && !purchasesReady ? void refreshAppStorePlans() : void startCheckout()}
+                  onPress={() => void startCheckout()}
                   disabled={checkoutBusy || (Platform.OS === "ios" && purchasesLoading) || (premium && purchasesReady && activePaidPlan === selectedPlan)}
                   style={[
                     styles.premiumUpgradeButton,
@@ -7997,21 +8067,18 @@ function TranqlyApp() {
                 >
                   <Text style={[styles.premiumCloseText, themedMuted]}>Not right now</Text>
                 </Pressable>
-                <Pressable
-                  onPress={() => void restoreAppStorePurchases()}
-                  disabled={checkoutBusy || (Platform.OS === "ios" && !purchasesReady)}
-                  style={styles.premiumCloseButton}
-                >
+                <Pressable onPress={() => void restoreAppStorePurchases()} disabled={checkoutBusy} style={styles.premiumCloseButton}>
                   <Text style={[styles.premiumCloseText, themedAccent]}>Restore purchases</Text>
                 </Pressable>
                 <View style={{ flexDirection: "row", justifyContent: "center", gap: 24 }}>
-                  <Pressable onPress={() => void Linking.openURL("https://tranqly.app/terms")}>
-                    <Text style={[styles.premiumPriceNote, themedMuted]}>Terms</Text>
+                  <Pressable accessibilityRole="link" onPress={() => void Linking.openURL("https://tranqly.app/terms")}>
+                    <Text style={[styles.subscriptionLegalLink, themedAccent]}>Terms of Use (EULA)</Text>
                   </Pressable>
-                  <Pressable onPress={() => void Linking.openURL("https://tranqly.app/privacy")}>
-                    <Text style={[styles.premiumPriceNote, themedMuted]}>Privacy</Text>
+                  <Pressable accessibilityRole="link" onPress={() => void Linking.openURL("https://tranqly.app/privacy")}>
+                    <Text style={[styles.subscriptionLegalLink, themedAccent]}>Privacy Policy</Text>
                   </Pressable>
                 </View>
+                </ScrollView>
               </Pressable>
             </Pressable>
           </Modal>
@@ -11664,8 +11731,12 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     padding: 24,
+    maxHeight: "92%",
     borderWidth: 1,
     borderColor: "#263142",
+  },
+  premiumModalScroll: {
+    paddingBottom: Platform.OS === "ios" ? 16 : 8,
   },
   modalHandle: {
     alignSelf: "center",
@@ -11917,6 +11988,26 @@ const styles = StyleSheet.create({
     textAlign: "center",
     fontSize: 12,
     fontWeight: "700",
+  },
+  subscriptionDisclosureTitle: {
+    marginTop: 10,
+    textAlign: "center",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  subscriptionDisclosure: {
+    marginTop: 5,
+    textAlign: "center",
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: "600",
+  },
+  subscriptionLegalLink: {
+    marginTop: 8,
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: "800",
+    textDecorationLine: "underline",
   },
   premiumCloseButton: {
     minHeight: 44,

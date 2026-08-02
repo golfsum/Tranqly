@@ -54,7 +54,10 @@ export default function TermsPage() {
           Tranqly may offer free and paid plans. Paid features may include unlimited AI insights, weekly pattern summaries, premium sanctuary themes, and more personalized guidance over time. Prices, features, and plan names may change, but changes will not affect the current term you already paid for unless permitted by the applicable app store or payment provider rules.
         </p>
         <p>
-          Mobile subscriptions may be purchased through Apple or another app store and are governed by that store&apos;s billing, cancellation, and refund rules. Web purchases may be processed by a payment provider such as Stripe. You are responsible for managing cancellations before renewal. Except where required by law or app store policy, fees are non-refundable.
+          Mobile subscriptions may be purchased through Apple or another app store and are governed by that store&apos;s billing, cancellation, and refund rules. For subscriptions purchased through Apple, payment is charged to your Apple ID when you confirm the purchase. The subscription automatically renews unless you cancel it at least 24 hours before the end of the current billing period. Your Apple ID account will be charged for renewal within 24 hours before the current period ends. You can manage or cancel the subscription in your App Store account settings.
+        </p>
+        <p>
+          Web purchases may be processed by a payment provider such as Stripe. You are responsible for managing cancellations before renewal. Except where required by law or app store policy, fees are non-refundable. Canceling stops future renewals but does not remove access already paid for during the current billing period.
         </p>
       </LegalSection>
 
